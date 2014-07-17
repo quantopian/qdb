@@ -1,9 +1,10 @@
 import qdb
-import pdb
+from qdb import Qdb
 
 def main():
-    qdb.set_trace(uuid_fn=lambda:'qdb')
-    # pdb.set_trace()
+    db = Qdb(uuid_fn=lambda: 'qdb',redirect_stdout=False)
+    db.set_break('test.py', 9)
+    db.set_trace(stop=False)
     test = 10
     print 'hi'
     f()

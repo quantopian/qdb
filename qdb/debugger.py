@@ -1,7 +1,22 @@
+#
+# Copyright 2014 Quantopian, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 from bdb import Bdb, Breakpoint, checkfuncname, BdbQuit
 from itertools import imap
 import signal
 import sys
+import traceback
 from uuid import uuid4
 
 try:
@@ -25,11 +40,22 @@ def default_eval_fn(src, stackframe, mode='eval'):
     return eval(code, stackframe.f_globals, stackframe.f_locals)
 
 
-def default_eval_exception_packager(exception):
+def default_exception_serializer(exception):
     """
-    The default exception handler for user exceptions in eval.
+    The default exception serializer for user exceptions in eval.
     """
-    return str(exception)
+    return '%s: %s' % (type(exception).__name__, str(exception))
+
+
+def default_repr_fn(obj):
+    """
+    The default repr function that catches all exceptions that could be
+    raised by a repr and reports them to the user.
+    """
+    try:
+        return repr(obj)
+    except Exception as e:
+        return 'repr on %s raised: (%s: %s)' % (type(obj), type(e).__name__, e)
 
 
 class Qdb(Bdb, object):
@@ -39,82 +65,102 @@ class Qdb(Bdb, object):
     def __init__(self,
                  host='localhost',
                  port=8001,
+                 auth_msg='',
+                 default_file=None,
                  eval_fn=None,
+                 exception_serializer=None,
                  skip_fn=None,
-                 topfile=None,
-                 file_cache={},
                  pause_signal=None,
+                 redirect_stdout=True,
                  retry_attepts=10,
+                 repr_fn=None,
                  uuid_fn=None,
-                 auth_fn=None):
+                 cmd_manager=None):
         """
         Host and port define the address to connect to.
+        The auth_msg is a message that will be sent with the start event to the
+        server. This can be used to do server/tracer authentication.
+        The default_file is a file to use if the file field is ommited from
+        payloads.
         eval_fn is the function to eval code where the user may provide it,
         for example in a conditional breakpoint, or in the repl.
         skip_fn is simmilar to the skip list feature of Bdb, except that
         it should be a function that takes a filename and returns True iff
         the debugger should skip this file. These files will be suppressed from
-        stack traces with a '...' in its place.
-        topfile defines a file where anything that does not have that in the
-        stack will be skipped.
-        file_cache will be used to pre-populate the internal filecache used for
-        looking up files and lines.
+        stack traces.
+        The pause_signal is signal to raise in this program to trigger a pause
+        command. If this is none, this will default to SIGUSR2.
         retry_attempts is the number of times to attempt to connect to the
         server before raising a QdbFailedToConnect error.
+        The repr_fn is a function to use to convert objects to strings to send
+        then back to the server. By default, this wraps repr by catching
+        exceptions and reporting them to the user.
         The uuid_fn is a function that will be used to generate unique session
         identifiers, this defaults to uuid4.
+        cmd_manager should be a callable that takes a Qdb instance and manages
+        commands by implementing a next_command method. If none, a new, default
+        manager will be created that reads commands from the server at
+        (host, port).
         """
         self.address = host, port
-        self.cmd_manager = None
-        self.eval_exception_packager = default_eval_exception_packager
-        self.eval_fn = default_eval_fn
-        self.file_cache = file_cache
+        self.default_file = default_file
+        self.exception_serializer = exception_serializer or \
+            default_exception_serializer
+        self.eval_fn = eval_fn or default_eval_fn
+        self._file_cache = {}
+        self.redirect_stdout = redirect_stdout
         self.retry_attepts = retry_attepts
-        self.skip_fn = lambda _: False
+        self.repr_fn = repr_fn or default_repr_fn
+        self.skip_fn = skip_fn or (lambda _: False)
         self.pause_signal = pause_signal if pause_signal else signal.SIGUSR2
-        self.topfile = topfile
         self.uuid = str((uuid_fn if uuid_fn else uuid4)())
         self.watchlist = {}
         # We need to be able to send stdout back to the user debugging the
         # program. We hold a handle to this in case the program resets stdout.
-        self.stdout = StringIO()
-        self.stdout_ptr = self.stdout.tell()
-        sys.stdout = self.stdout
+        if self.redirect_stdout:
+            self.stdout = StringIO()
+            self.stdout_ptr = self.stdout.tell()
+            sys.stdout = self.stdout
         self.forget()
         super(Qdb, self).__init__()
-        self.connect()
+        if not cmd_manager:
+            self._connect(auth_msg)
+        else:
+            self.cmd_manager = cmd_manager(self, auth_msg)
 
-    def connect(self):
+    def _connect(self, auth_msg):
         """
         Attempts to connect to the server.
         On success, returns None, raises a QdbFailedToConnect error otherwise.
         """
-        self.cmd_manager = CommandManager(self)
+        self.cmd_manager = CommandManager(self, auth_msg)
 
     def get_line(self, filename, line):
         """
         Checks for any user cached files before deferring to the linecache.
         """
-        if filename in self.file_cache:
-            return self.file_cache[filename][line - 1]
-        self.cache_file(filename)
-        return self.get_line(filename, line)
+        # The line - 1 is so that querying line 1 gives us the first line in
+        # the file.
+        return self._get_file_lines(filename)[line - 1]
 
     def get_file(self, filename):
         """
         Retrieves a file out of cache or opens and caches it.
         """
-        if filename in self.file_cache:
-            return ''.join(self.file_cache[filename])
-        self.cache_file(filename)
-        return self.get_file(filename)
+        return '\n'.join(self._get_file_lines(filename))
 
-    def is_executable(self, filename, line):
+    def _get_file_lines(self, filename):
         """
-        Cannot execute blank lines or comments.
+        Retrieves the file from the file cache as a list of lines.
+        If the file does not exist in the cache, it is cached from
+        disk.
         """
-        code = self.get_line(filename, line).strip()
-        return code and not code.startswith(('#', '"""', "'''"))
+        try:
+            return self._file_cache[filename]
+        except KeyError:
+            if not self.cache_file(filename):
+                return []
+            return self._file_cache.get(filename)
 
     def cache_file(self, filename, contents=None):
         """
@@ -122,12 +168,21 @@ class Qdb(Bdb, object):
         This overrides whatever was cached for filename previously.
         If contents is provided, it allows the user to cache a filename to a
         string.
+        Returns True if the file caching succeeded, otherwise returns false.
         """
         if contents:
-            self.file_cache[filename] = contents.splitlines()
-            return
-        with open(filename, 'r') as f:
-            self.file_cache[filename] = f.readlines()
+            self._file_cache[filename] = contents.splitlines()
+            return True
+        try:
+            with open(filename, 'r') as f:
+                self._file_cache[filename] = map(
+                    lambda l: l[:-1] if l.endswith('\n') else l,
+                    f.readlines()
+                )
+                return True
+        except IOError:
+            # The caching operation failed.
+            return False
 
     def set_break(self, filename, lineno, temporary=0, cond=None,
                   funcname=None):
@@ -135,25 +190,23 @@ class Qdb(Bdb, object):
         Sets a breakpoint. This is overridden to account for the filecache
         and for unreachable lines.
         """
-        filename = self.canonic(filename)
-        bp = Breakpoint(filename, lineno, temporary, cond, funcname)
+        filename = self.canonic(filename) if filename else self.default_file
         try:
             self.get_line(filename, lineno)
         except IndexError:
             raise QdbUnreachableBreakpoint(bp)
 
-        Breakpoint.bpbynumber[Breakpoint.next] = bp
-        Breakpoint.next += 1
+        list = self.breaks.setdefault(filename, [])
+        if lineno not in list:
+            list.append(lineno)
+        bp = Breakpoint(filename, lineno, temporary, cond, funcname)
 
-        if (filename, lineno) in Breakpoint.bplist:
-            Breakpoint.bplist[(filename, lineno)] = [bp]
-        else:
-            Breakpoint.bplist[(filename, lineno)].append(bp)
-
-    def clear_break(self, filename, lineno, **kwargs):
+    def clear_break(self, filename, lineno, *args, **kwargs):
         """
         Wrapper to make the breakpoint json standardized for setting
         and removing of breakpoints.
+        This means that the same json data that was used to set a break point
+        may be fed into this function with the extra values ignored.
         """
         super(Qdb, self).clear_break(filename, lineno)
 
@@ -162,24 +215,6 @@ class Qdb(Bdb, object):
         if canonic_filename.endswith('pyc'):
             return canonic_filename[:-1]
         return canonic_filename
-
-    @staticmethod
-    def stack_generator(stackframe):
-        """
-        Yields the stack starting at stackframe.
-        """
-        while stackframe:
-            yield stackframe
-            stackframe = stackframe.f_back
-
-    def below_or_in_topfile(self, stackframe):
-        """
-        Returns True iff the topfile is in the stack above or on this frame.
-        """
-        if self.topfile is None:
-            return True
-        return any(imap(lambda f: f.f_code.co_filename == self.topfile,
-                        self.stack_generator(stackframe)))
 
     def reset(self):
         self.botframe = None
@@ -193,14 +228,29 @@ class Qdb(Bdb, object):
         self.curframe = None
 
     def setup_stack(self, stackframe, traceback):
+        """
+        Sets up the state of the debugger object for this frame.
+        """
         self.forget()
         self.stack, self.curindex = self.get_stack(stackframe, traceback)
         self.curframe = self.stack[self.curindex][0]
         self.curframe_locals = self.curframe.f_locals
+        self.update_watchlist()
+
+    def update_watchlist(self):
+        """
+        Updates the watchlist by evaluating all the watched expressions in
+        our current frame.
+        """
+        for expr in self.watchlist:
+            try:
+                self.watchlist[expr] = self.eval_fn(expr, self.curframe)
+            except Exception as e:
+                self.watchlist[expr] = self.exception_serializer(e)
 
     def effective(self, file, line, stackframe):
         """
-        Finds teh effective breakpoint for this line; called only
+        Finds the effective breakpoint for this line; called only
         when we know that there is a breakpoint here.
 
         returns the breakpoint paired with a flag denoting if we should
@@ -237,7 +287,7 @@ class Qdb(Bdb, object):
                     self.cmd_manager.send_error(
                         'condition', {
                             'cond': breakpoint.cond,
-                            'exc': self.debugger.eval_exception_packager(e),
+                            'exc': self.debugger.exception_serializer(e),
                         }
                     )
                     # Return this breakpoint to be safe. The user will be
@@ -262,7 +312,7 @@ class Qdb(Bdb, object):
             if not lineno in self.breaks[filename]:
                 return False
 
-        # flag says ok to delete temp. bp
+        # flag says ok to delete temporary breakpoints.
         breakpoint, flag = self.effective(filename, lineno, stackframe)
         if breakpoint:
             self.currentbp = breakpoint.number
@@ -272,42 +322,27 @@ class Qdb(Bdb, object):
         else:
             return False
 
-    def trace_dispatch(self, frame, event, arg):
+    def trace_dispatch(self, stackframe, event, arg):
         """
         Trace function that does some preliminary checks and then defers to
         the event handler for each type of event.
         """
         if self.quitting:
             # We were told to quit by the user, bubble this up to their code.
-            raise QdbQuit()
+            return
 
-        if not self.below_or_in_topfile(frame):
-            return None
-
-        if self.skip_fn(frame.f_code.co_filename):
+        if self.skip_fn(self.canonic(stackframe.f_code.co_filename)):
             # We want to skip this, don't stop but keep tracing.
             return self.trace_dispatch
-        if event == 'line':
-            return self.dispatch_line(frame)
-        if event == 'call':
-            return self.dispatch_call(frame, arg)
-        if event == 'return':
-            return self.dispatch_return(frame, arg)
-        if event == 'exception':
-            return self.dispatch_exception(frame, arg)
-        if event == 'c_call':
-            return self.trace_dispatch
-        if event == 'c_exception':
-            return self.trace_dispatch
-        if event == 'c_return':
-            return self.trace_dispatch
+
         try:
-            super(Qdb, self).trace_dispatch(frame, event, arg)
+            return super(Qdb, self).trace_dispatch(stackframe, event, arg)
         except BdbQuit:
             raise QdbQuit()  # Rewrap as a QdbError object.
 
     def user_call(self, stackframe, arg):
-        pass
+        if self.stop_here(stackframe):
+            self.user_line(stackframe)
 
     def user_line(self, stackframe):
         self.setup_stack(stackframe, None)
@@ -325,7 +360,7 @@ class Qdb(Bdb, object):
         msg = fmt_msg('return', str(return_value))
         self.cmd_manager.next_command(msg)
 
-    def dispatch_exception(self, stackframe, exc_info):
+    def user_exception(self, stackframe, exc_info):
         exc_type, exc_value, exc_traceback = exc_info
         stackframe.f_locals['__exception__'] = exc_type, exc_value
         self.setup_stack(stackframe, exc_traceback)
@@ -333,9 +368,9 @@ class Qdb(Bdb, object):
         self.cmd_manager.send_stdout()
         self.cmd_manager.send_stack()
         msg = fmt_msg('exception', {
-            'type': exc_type,
-            'value': exc_value,
-            'traceback': exc_traceback
+            'type': str(exc_type),
+            'value': str(exc_value),
+            'traceback': traceback.format_tb(exc_traceback)
         })
         self.cmd_manager.next_command(msg)
 
@@ -357,11 +392,33 @@ class Qdb(Bdb, object):
         """
         Stops tracing.
         """
-        if mode == 'soft':
-            self.clear_all_breaks()
-            self.set_continue()
-            sys.stdout = self.real_stdout
-        elif mode == 'hard':
-            sys.exit(1)
+        try:
+            if mode == 'soft':
+                self.clear_all_breaks()
+                self.set_continue()
+                sys.stdout = sys.__stdout__
+            elif mode == 'hard':
+                sys.exit(1)
+            else:
+                raise ValueError("mode must be 'hard' or 'soft'")
+        finally:
+            self.cmd_manager.stop()
+
+    def set_trace(self, stackframe=None, stop=True):
+        """
+        Starts debugging in stackframe or in the callers frame.
+        If stop is True, begin stepping from here, otherwise, wait for
+        the first breakpoint or exception.
+        """
+        # We need to look back 1 frame to get our caller.
+        stackframe = stackframe or sys._getframe().f_back
+        self.reset()
+        while stackframe:
+            stackframe.f_trace = self.trace_dispatch
+            self.botframe = stackframe
+            stackframe = stackframe.f_back
+        if stop:
+            self.set_step()
         else:
-            raise ValueError('mode must be \'hard\' or \'soft\'')
+            self.set_continue()
+        sys.settrace(self.trace_dispatch)
