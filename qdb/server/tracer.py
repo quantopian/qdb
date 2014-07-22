@@ -58,7 +58,16 @@ class QdbTracerServer(StreamServer):
                     # We did not get a valid length, the stream is corrupt.
                     return
                 rlen = unpack('>i', rlen)[0]
-                resp = conn.recv(rlen)
+                bytes_recieved = 0
+                resp = ''
+                with Timeout(1, False):
+                    while bytes_recieved < rlen:
+                        resp += conn.recv(rlen - bytes_recieved)
+                        bytes_recieved = len(resp)
+
+                if bytes_recieved != rlen:
+                    return  # We are not getting bytes anymore.
+
                 resp = pickle.loads(resp)
                 resp['e']
             except (socket.error, EOFError):
@@ -141,4 +150,7 @@ class QdbTracerServer(StreamServer):
                 self.session_store.send_to_clients(uuid, event=event)
         finally:
             log.info('Closing stream from %s to session %s' % (addr, uuid))
+            # The session_store should close this, but closing it again here
+            # assures that it is closed even if it never makes it to the
+            # session_store.
             conn.close()

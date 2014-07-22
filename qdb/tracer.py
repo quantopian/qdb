@@ -25,7 +25,7 @@ except ImportError:
 
 from logbook import Logger
 
-from qdb.comm import CommandManager, fmt_msg
+from qdb.comm import RemoteCommandManager, fmt_msg
 from qdb.errors import QdbUnreachableBreakpoint, QdbQuit
 
 log = Logger('Qdb')
@@ -120,7 +120,7 @@ class Qdb(Bdb, object):
         Attempts to connect to the server.
         On success, returns None, raises a QdbFailedToConnect error otherwise.
         """
-        self.cmd_manager = CommandManager(self, auth_msg)
+        self.cmd_manager = RemoteCommandManager(self, auth_msg)
 
     def get_line(self, filename, line):
         """
@@ -171,7 +171,7 @@ class Qdb(Bdb, object):
             # The caching operation failed.
             return False
 
-    def set_break(self, filename, lineno, temporary=0, cond=None,
+    def set_break(self, filename, lineno, temporary=False, cond=None,
                   funcname=None):
         """
         Sets a breakpoint. This is overridden to account for the filecache
@@ -189,9 +189,9 @@ class Qdb(Bdb, object):
                 'func': funcname,
             })
 
-        list = self.breaks.setdefault(filename, [])
-        if lineno not in list:
-            list.append(lineno)
+        blist = self.breaks.setdefault(filename, [])
+        if lineno not in blist:
+            blist.append(lineno)
         Breakpoint(filename, lineno, temporary, cond, funcname)
 
     def clear_break(self, filename, lineno, *args, **kwargs):
@@ -228,6 +228,15 @@ class Qdb(Bdb, object):
         self.stack, self.curindex = self.get_stack(stackframe, traceback)
         self.curframe = self.stack[self.curindex][0]
         self.curframe_locals = self.curframe.f_locals
+        self.update_watchlist()
+
+    def extend_watchlist(self, *args):
+        """
+        Adds every arg to the watchlist and updates.
+        """
+        for expr in args:
+            self.watchlist[expr] = ''
+
         self.update_watchlist()
 
     def update_watchlist(self):
@@ -310,7 +319,7 @@ class Qdb(Bdb, object):
         if breakpoint:
             self.currentbp = breakpoint.number
             if flag and breakpoint.temporary:
-                self.do_clear(breakpoint)
+                self.do_clear(breakpoint.number)
             return True
         else:
             return False
@@ -367,11 +376,13 @@ class Qdb(Bdb, object):
         })
         self.cmd_manager.next_command(msg)
 
-    def do_clear(arg):
+    def do_clear(self, bpnum):
         """
         Handles deletion of temporary breakpoints.
         """
-        arg.deleteMe()
+        if not (0 <= bpnum < len(Breakpoint.bpbynumber)):
+            return
+        self.clear_bpbynumber(bpnum)
 
     def set_quit(self):
         """

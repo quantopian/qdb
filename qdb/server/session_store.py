@@ -18,11 +18,11 @@ patch_all()
 from collections import namedtuple
 import errno
 import json
-import socket
 from struct import pack
 from time import time
 
 import gevent
+from gevent import socket
 from gevent.event import Event
 from geventwebsocket import WebSocketError
 from logbook import Logger
@@ -31,7 +31,6 @@ try:
     import cPickle as pickle
 except ImportError:
     import pickle
-
 
 # The number of minutes that a session can go without sending a message before
 # it is cleaned by the gc.
@@ -107,6 +106,8 @@ class SessionStore(object):
                  sweep_time=SESSION_GC_SLEEP_TIME,
                  attach_timeout=ATTACH_TIMEOUT,
                  timeout_disable_mode='soft'):
+        if timeout_disable_mode not in ['soft', 'hard']:
+            raise ValueError("timeout_disable_mode must be 'hard' or 'soft'")
         self.inactivity_timeout = inactivity_timeout
         self.sweep_time = sweep_time
         self.attach_timeout = attach_timeout
@@ -223,11 +224,15 @@ class SessionStore(object):
                     'p': event.pop('p', None)
                 }
                 msg = pickle.dumps(msg_dict)
-            except pickle.PicklingError:
+            except pickle.PicklingError as p:
+                log.warn('send_to_tracer(%s, event=%s) failed: %s'
+                         % (uuid, event, p))
                 return
         if not msg:
             return  # No message to send.
         if uuid not in self._sessions:
+            log.warn('send_to_tracer failed: session %s does not exist'
+                     % uuid)
             return  # Session doesn't exist.
 
         sck = self._sessions[uuid].tracer
@@ -250,11 +255,15 @@ class SessionStore(object):
                 if 'p' in event:
                     msg_dict['p'] = event['p']
                 msg = json.dumps(msg_dict)
-            except ValueError:
+            except ValueError as v:
+                log.warn('send_to_clients(%s, event=%s) failed: %s'
+                         % (uuid, event, v))
                 return
         if not msg:
             return  # No message to send.
         if uuid not in self._sessions:
+            log.warn('send_to_clients failed: session %s does not exist'
+                     % uuid)
             return  # Session doesn't exist.
         clients = self._sessions[uuid].clients
         for client in set(clients):
@@ -272,8 +281,7 @@ class SessionStore(object):
         If mode is 'soft', the tracer clears all breakpoints and continues
         execution. If it is 'hard', it raises a QdbQuit in the tracer process.
         """
-        log.info('Debugging session %s has been terminated' % uuid)
-        session = self._sessions.pop(uuid, None)
+        session = self._sessions.get(uuid)
         if not session:
             return  # Slaughtering a session that does not exits.
         # Close all the clients.
@@ -301,6 +309,8 @@ class SessionStore(object):
                         'Exception caught while killing tracer for session %s:'
                         % uuid
                     )
+        del self._sessions[uuid]
+        log.info('Debugging session %s has been terminated' % uuid)
 
     def slaughter_all(self, mode='soft'):
         """

@@ -145,9 +145,9 @@ class QdbClientServer(object):
                     self.send_error(ws, 'auth', message)
                     ws.send(json.dumps({'e': 'disable'}))
                 except WebSocketError:
-                    # We are unable to send the disable message for some reason;
-                    # however, they already failed auth so suppress it and
-                    # close.
+                    # We are unable to send the disable message for some
+                    # reason; however, they already failed auth so suppress
+                    # it and close.
                     pass
                 return
 

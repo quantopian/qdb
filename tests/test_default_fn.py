@@ -30,7 +30,7 @@ class TestException(Exception):
     def __init__(self, e):
         self.e = e
 
-    def  __str__(self):
+    def __str__(self):
         return 'result = ' + str(self.e)
 
 
@@ -50,10 +50,10 @@ class DefaultFnTester(TestCase):
         ('test_dict["t"]', 'test'),
     ])
     def test_default_eval_fn(self, code, result):
-        test_var = 10
-        test_fn = lambda n: n + 1
-        test_list = [0]
-        test_dict = {'t': 'test'}
+        test_var = 10  # NOQA
+        test_fn = lambda n: n + 1  # NOQA
+        test_list = [0]  # NOQA
+        test_dict = {'t': 'test'}  # NOQA
         if issubclass(type(result), Exception):
             with self.assertRaises(type(result)):
                 default_eval_fn(code, sys._getframe())

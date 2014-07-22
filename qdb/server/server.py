@@ -21,7 +21,12 @@ from gevent.event import Event
 from logbook import Logger
 
 from qdb.server.client import QdbClientServer
-from qdb.server.session_store import SessionStore
+from qdb.server.session_store import (
+    SessionStore,
+    SESSION_INACTIVITY_TIMEOUT,
+    SESSION_GC_SLEEP_TIME,
+    ATTACH_TIMEOUT,
+)
 from qdb.server.tracer import QdbTracerServer
 
 log = Logger('QdbServer')
@@ -32,7 +37,7 @@ DEFAULT_ROUTE = '/websocket/(.+)'
 # The default route as a format string.
 DEFAULT_ROUTE_FMT = '/websocket/{uuid}'
 
-# The number of seconds a browser has to authenticate.
+# The number of seconds a connection has to authenticate.
 AUTH_TIMEOUT = 60  # seconds
 
 
@@ -49,6 +54,10 @@ class QdbServer(object):
                  client_port=8002,
                  route=DEFAULT_ROUTE,
                  auth_timeout=AUTH_TIMEOUT,
+                 inactivity_timeout=SESSION_INACTIVITY_TIMEOUT,
+                 attach_timeout=ATTACH_TIMEOUT,
+                 sweep_time=SESSION_GC_SLEEP_TIME,
+                 timeout_disable_mode='soft',
                  tracer_auth_fn=None,
                  client_auth_fn=None,
                  tracer_server=None,
@@ -56,7 +65,11 @@ class QdbServer(object):
         """
         Sets up the qdb server.
         """
-        self.session_store = session_store or SessionStore()
+        self.session_store = session_store \
+            or SessionStore(inactivity_timeout=inactivity_timeout,
+                            attach_timeout=attach_timeout,
+                            sweep_time=sweep_time,
+                            timeout_disable_mode=timeout_disable_mode)
         client_auth_fn = client_auth_fn or (lambda _: True)  # No auth.
         tracer_auth_fn = tracer_auth_fn or (lambda _: True)
         self._running = False

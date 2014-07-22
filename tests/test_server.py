@@ -15,17 +15,15 @@
 import json
 from unittest import TestCase
 
-import gevent
 from gevent import Timeout, spawn_later
-import socket
+from gevent import socket
+from nose_parameterized import parameterized
 from struct import pack, unpack
 from websocket import create_connection
 
 from qdb.server import (
     QdbServer,
-    QdbClientServer,
     QdbNopClientServer,
-    QdbTracerServer,
     QdbNopTracerServer,
 )
 from qdb.server.server import DEFAULT_ROUTE_FMT
@@ -48,6 +46,18 @@ def send_tracer_event(sck, event, payload):
     sck.sendall(msg)
 
 
+def send_client_event(ws, event, payload):
+    """
+    Sends an event to the client.
+    """
+    ws.send(
+        json.dumps({
+            'e': event,
+            'p': payload,
+        })
+    )
+
+
 def recv_tracer_event(sck):
     """
     Reads an event off the socket.
@@ -55,8 +65,24 @@ def recv_tracer_event(sck):
     length = sck.recv(4)
     if len(length) != 4:
         return None
-    length = unpack('>i', length)[0]
-    return pickle.loads(sck.recv(length)[0])
+    rlen = unpack('>i', length)[0]
+    bytes_recieved = 0
+    resp = ''
+    with Timeout(1, False):
+        while bytes_recieved < rlen:
+            resp += sck.recv(rlen - bytes_recieved)
+            bytes_recieved = len(resp)
+
+    if bytes_recieved != rlen:
+        return None
+    return pickle.loads(resp)
+
+
+def recv_client_event(ws):
+    """
+    Reads an event off the websocket.
+    """
+    return json.loads(ws.recv())
 
 
 class ServerTester(TestCase):
@@ -172,6 +198,15 @@ class ServerTester(TestCase):
             client_server=QdbNopClientServer(),
         )
         server.start()
+
+        auth_failed_dict = {
+            'e': 'error',
+            'p': {
+                'type': 'auth',
+                'data': 'Authentication failed'
+            }
+        }
+
         try:
             sck = socket.create_connection(('localhost', 8001))
 
@@ -179,9 +214,10 @@ class ServerTester(TestCase):
                 'uuid': 'test',
                 'auth': 'friendzoned-again'
             })
-            with self.assertRaises(EOFError):
-                # We failed auth so the socket should be closed.
-                recv_tracer_event(sck)
+            # We failed auth so the socket should be closed.
+            self.assertEqual(auth_failed_dict,
+                             recv_tracer_event(sck))
+            self.assertFalse('test' in server.session_store)
         finally:
             if sck:
                 sck.close()
@@ -199,18 +235,52 @@ class ServerTester(TestCase):
             auth_timeout=1,  # 1 second auth timeout.
         )
         server.start()
+
+        auth_failed_dict = {
+            'e': 'error',
+            'p': {
+                'type': 'auth',
+                'data': 'No start event received',
+            }
+        }
+
         try:
             sck = socket.create_connection(('localhost', 8006))
 
-            passes = False
-            with Timeout(2, False):
-                try:
-                    recv_tracer_event(sck)
-                except EOFError:
-                    passes = True
-
-            self.assertTrue(passes)
+            self.assertEqual(auth_failed_dict, recv_tracer_event(sck))
+            self.assertFalse('test' in server.session_store)
         finally:
             if sck:
                 sck.close()
+            server.stop()
+
+    @parameterized.expand(['hard', 'soft'])
+    def test_inactivity_timeout(self, mode):
+        """
+        Tests that timeout sends a disable message with the proper mode..
+        """
+        server = QdbServer(
+            tracer_host='localhost',
+            tracer_port=8007,
+            client_host='localhost',
+            client_port=8008,
+            inactivity_timeout=0.01,  # minutes
+            sweep_time=0.01,  # seconds
+            timeout_disable_mode=mode,
+        )
+        server.start()
+        try:
+            tracer = socket.create_connection(('localhost', 8007))
+            send_tracer_event(tracer, 'start', {'uuid': 'test', 'auth': ''})
+            client = create_connection(
+                'ws://localhost:8008' + DEFAULT_ROUTE_FMT.format(uuid='test')
+            )
+            send_client_event(client, 'start', '')
+            self.assertEqual({'e': 'start', 'p': ''},
+                             recv_tracer_event(tracer))
+            self.assertEqual({'e': 'disable', 'p': mode},
+                             recv_tracer_event(tracer))
+            self.assertEqual({'e': 'disable'}, recv_client_event(client))
+            self.assertFalse('test' in server.session_store)
+        finally:
             server.stop()

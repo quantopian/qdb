@@ -12,6 +12,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from abc import ABCMeta, abstractmethod
+
 import atexit
 from bdb import Breakpoint
 from contextlib import contextmanager
@@ -92,52 +94,186 @@ def fmt_breakpoint(breakpoint):
     }
 
 
-class NopCmdManager(object):
+class CommandManager(object):
+    """
+    An abstract base class for the command managers that control the tracer.
+    """
+    __metaclass__ = ABCMeta
+
+    def __init__(self, tracer, auth_msg=''):
+        self.auth_msg = auth_msg
+        self.tracer = tracer
+
+    def _fmt_stackframe(self, stackframe, line):
+        """
+        Formats stackframe payload data.
+        """
+        filename = stackframe.f_code.co_filename
+        func = stackframe.f_code.co_name
+        code = self.tracer.get_line(filename, line)
+        return {
+            'file': self.tracer.canonic(filename),
+            'line': line,
+            'func': func,
+            'code': code,
+        }
+
+    def send_breakpoints(self):
+        """
+        Sends the breakpoint list event.
+        """
+        self.send_event(
+            'breakpoints',
+            [fmt_breakpoint(breakpoint) for breakpoint in Breakpoint.bpbynumber
+             if breakpoint]
+        )
+
+    def send_watchlist(self):
+        """
+        Sends the watchlist event.
+        """
+        self.send_event(
+            'watchlist',
+            [{'expr': k, 'value': v}
+             for k, v in self.tracer.watchlist.iteritems()],
+        )
+
+    def send_print(self, input, output):
+        """
+        Sends the print event with the given input and output.
+        """
+        self.send(fmt_msg(
+            'print', {
+                'input': input,
+                'output': output
+            })
+        )
+
+    def send_stack(self):
+        """
+        Sends the stack event.
+        """
+        # Starting at the frame we are in, we need to filter based on the
+        # tracer's skip_fn rules. We will also format each stackframe.
+        self.send_event(
+            'stack',
+            [self._fmt_stackframe(stackframe, line)
+             for stackframe, line in self.tracer.stack
+             if not
+             self.tracer.skip_fn(
+                 self.tracer.canonic(stackframe.f_code.co_filename)
+             )],
+        )
+
+    def send_stdout(self):
+        """
+        Sends a print that denotes that this is coming from the process.
+        This function is a nop if the tracer is not set to redirect the
+        stdout to the client.
+        """
+        if self.tracer.redirect_stdout:
+            self.tracer.stdout.seek(self.tracer.stdout_ptr)
+            out = self.tracer.stdout.read()
+            self.tracer.stdout_ptr = self.tracer.stdout.tell()
+            self.send_print('<stdout>', out)
+
+    def send_error(self, error_type, error_data):
+        """
+        Sends a formatted error message.
+        """
+        self.send(fmt_err_msg(error_type, error_data))
+
+    def send_event(self, event, payload=None):
+        """
+        Sends a formatted event.
+        """
+        self.send(fmt_msg(event, payload))
+
+    def next_command(self, msg=None):
+        """
+        Processes the next command from the user.
+        If msg is given, it is sent with self.send(msg) before processing the
+        next command.
+        """
+        if msg:
+            self.send(msg)
+        self.user_next_command()
+
+    @abstractmethod
+    def send(self, msg):
+        """
+        Sends a raw (already pickled) message.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def user_next_command(self):
+        """
+        Processes the next command.
+        This method must be overridden to dictate how the commands are
+        processed.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def stop(self):
+        """
+        Stop aquuiring new commands.
+        Use this to release and resources needed to generate the commands.
+        """
+        raise NotImplementedError
+
+
+class NopCmdManager(CommandManager):
     """
     Nop command manager that never alters the state of the debugger.
     This is useful if you want to manage the debugger in an alternate way.
     """
-    def __init__(self, debugger, auth_msg):
+    def user_next_command(self):
         pass
 
-    def next_command(self):
+    def send(self, msg):
+        pass
+
+    def stop(self):
         pass
 
 
-class CommandManager(object):
+class RemoteCommandManager(CommandManager):
     """
-    Manager that processes commands.
+    Manager that processes commands from the server.
+    This is the default Qdb command manager.
     """
-    def __init__(self, debugger, auth_msg):
-        self.debugger = debugger
+    def __init__(self, tracer, auth_msg):
+        super(RemoteCommandManager, self).__init__()
 
         # Construct a pipe to talk to the reader.
         self.pipe, child_end = Pipe()
 
         # Attach the signal handler to manage the pause command.
-        signal.signal(debugger.pause_signal, self._pause_handler)
+        signal.signal(tracer.pause_signal, self._pause_handler)
 
-        log.info('Connecting to (%s, %d)' % debugger.address)
+        log.info('Connecting to (%s, %d)' % tracer.address)
         self.socket = None
-        for n in xrange(self.debugger.retry_attepts):
+        for n in xrange(self.tracer.retry_attepts):
             try:
-                self.socket = socket.create_connection(debugger.address)
+                self.socket = socket.create_connection(tracer.address)
                 break
             except socket.error:
                 log.warn(
                     'Client %s failed to connect to (%s, %d) on attempt %d...'
-                    % (self.debugger.uuid, debugger.address[0],
-                       debugger.address[1], n + 1)
+                    % (self.tracer.uuid, tracer.address[0],
+                       tracer.address[1], n + 1)
                 )
         if self.socket is None:
             log.warn(
                 'Failed to connect to (%s, %d), no longer retying.'
-                % debugger.address
+                % tracer.address
             )
-            raise QdbFailedToConnect(debugger.address, debugger.retry_attepts)
+            raise QdbFailedToConnect(tracer.address, tracer.retry_attepts)
         log.info('Client %s connected to (%s, %d)'
-                 % (self.debugger.uuid, self.debugger.address[0],
-                    self.debugger.address[1]))
+                 % (self.tracer.uuid, self.tracer.address[0],
+                    self.tracer.address[1]))
 
         # Create the comminicator assuming we did not raise any exceptions.
         self.reader = Process(
@@ -153,7 +289,7 @@ class CommandManager(object):
         self.send(
             fmt_msg(
                 'start', {
-                    'uuid': self.debugger.uuid,
+                    'uuid': self.tracer.uuid,
                     'auth': auth_msg
                 }
             )
@@ -173,8 +309,8 @@ class CommandManager(object):
         """
         Makes our protocol for breakpoints match the Bdb protocol.
         """
-        if 'file' not in breakpoint and self.debugger.default_file:
-            breakpoint['file'] = self.debugger.default_file
+        if 'file' not in breakpoint and self.tracer.default_file:
+            breakpoint['file'] = self.tracer.default_file
         if 'file' in breakpoint and 'line' in breakpoint:
             # Do some formatting here to make the params cleaner.
             breakpoint['filename'] = breakpoint.pop('file')
@@ -187,91 +323,6 @@ class CommandManager(object):
             return breakpoint
 
         raise QdbBreakpointReadError(breakpoint)
-
-    def send_breakpoints(self):
-        """
-        Sends the serialized list of breakpoints to the server.
-        """
-        self.send_event(
-            'breakpoints',
-            [fmt_breakpoint(breakpoint)
-             for breakpoint in Breakpoint.bpbynumber
-             if breakpoint]
-        )
-
-    def send_watchlist(self):
-        """
-        Sends the watchlist to the server.
-        """
-        self.send_event(
-            'watchlist',
-            [{'expr': k, 'value': v}
-             for k, v in self.debugger.watchlist.iteritems()],
-        )
-
-    def send_print(self, input_, output):
-        """
-        Sends the print command results.
-        """
-        msg = fmt_msg('print', {
-            'input': input_,
-            'output': output
-        })
-        self.send(msg)
-
-    def fmt_stackframe(self, stackframe, line):
-        """
-        Formats stackframe payload data.
-        """
-        filename = stackframe.f_code.co_filename
-        func = stackframe.f_code.co_name
-        code = self.debugger.get_line(filename, line)
-        return {
-            'file': self.debugger.canonic(filename),
-            'line': line,
-            'func': func,
-            'code': code,
-        }
-
-    def send_stack(self):
-        """
-        Sends back the formated stack to the server.
-        """
-        # Starting at the frame we are in, we need to filter based on the
-        # debugger's skip_fn rules. We will also format each stackframe.
-        self.send_event(
-            'stack',
-            [self.fmt_stackframe(stackframe, line)
-             for stackframe, line in self.debugger.stack
-             if not
-             self.debugger.skip_fn(
-                 self.debugger.canonic(stackframe.f_code.co_filename)
-             )],
-        )
-
-    def send_stdout(self):
-        """
-        Sends a print that denotes that this is coming from the process.
-        This function is a nop if the debugger is not set to redirect the
-        stdout to the client.
-        """
-        if self.debugger.redirect_stdout:
-            self.debugger.stdout.seek(self.debugger.stdout_ptr)
-            out = self.debugger.stdout.read()
-            self.debugger.stdout_ptr = self.debugger.stdout.tell()
-            self.send_print('<stdout>', out)
-
-    def send_error(self, error_type, error_data):
-        """
-        Sends a formatted error message back to the server.
-        """
-        self.send(fmt_err_msg(error_type, error_data))
-
-    def send_event(self, event, payload=None):
-        """
-        Sends a formatted event to the server.
-        """
-        self.send(fmt_msg(event, payload))
 
     def send(self, msg):
         """
@@ -294,8 +345,8 @@ class CommandManager(object):
         """
         Manager for the pause command.
         """
-        if signum == self.debugger.pause_signal:
-            self.debugger.set_step()
+        if signum == self.tracer.pause_signal:
+            self.tracer.set_step()
 
     def _get_events(self):
         """
@@ -329,48 +380,44 @@ class CommandManager(object):
         else:
             raise QdbCommunicationError(payload)
 
-    def next_command(self, msg=None):
+    def user_next_command(self, msg=None):
         """
-        Returns the next command to be called with the current stackframe.
-        If msg provided, it sends the msg back the server first.
+        Processes the next message from the reader.
         """
-        # Send back the provided message.
-        if msg:
-            self.send(msg)
         try:
             return next(self._command_generator)()
         except StopIteration:
             raise QdbCommunicationError()
 
     def command_step(self, payload):
-        self.debugger.set_step()
+        self.tracer.set_step()
 
     def command_return(self, payload):
-        self.debugger.set_return(self.debugger.curframe)
+        self.tracer.set_return(self.tracer.curframe)
 
     def command_next(self, payload):
-        self.debugger.set_next(self.debugger.curframe)
+        self.tracer.set_next(self.tracer.curframe)
 
     def command_until(self, payload):
-        self.debugger.set_until(self.debugger.curframe)
+        self.tracer.set_until(self.tracer.curframe)
 
     def command_continue(self, payload):
-        self.debugger.set_continue()
+        self.tracer.set_continue()
 
     def command_eval(self, payload):
         if not self.payload_check(payload, 'eval'):
             return self.next_command()
         with capture_output() as out:
             try:
-                self.debugger.eval_fn(
+                self.tracer.eval_fn(
                     payload,
-                    self.debugger.curframe,
+                    self.tracer.curframe,
                     'single'
                 )
             except Exception as e:
                 self.send_print(
                     payload,
-                    self.debugger.exception_serializer(e)
+                    self.tracer.exception_serializer(e)
                 )
             else:
                 out_msg = out.getvalue()[:-1] if out.getvalue() \
@@ -383,10 +430,7 @@ class CommandManager(object):
         if not self.payload_check(payload, 'set_watch'):
             return self.next_command()
 
-        for w in payload:
-            self.debugger.watchlist[w] = ''
-
-        self.debugger.update_watchlist()
+        self.tracer.extend_watchlist(*payload)
         self.send_watchlist()
 
     def command_clear_watch(self, payload):
@@ -408,7 +452,7 @@ class CommandManager(object):
             return self.next_command(err_msg)
 
         try:
-            self.debugger.set_break(**breakpoint)
+            self.tracer.set_break(**breakpoint)
         except QdbUnreachableBreakpoint as u:
             err_msg = fmt_err_msg('set_breakpoint', str(u))
             return self.next_command(err_msg)
@@ -424,7 +468,7 @@ class CommandManager(object):
             err_msg = fmt_err_msg('clear_break', str(b))
             return self.next_command(err_msg)
 
-        self.debugger.clear_break(**breakpoint)
+        self.tracer.clear_break(**breakpoint)
         self.next_command()
 
     def command_list(self, payload):
@@ -435,15 +479,15 @@ class CommandManager(object):
             err_msg = fmt_err_msg('payload', 'list: expected field \'file\'')
             return self.next_command(err_msg)
         try:
-            if self.debugger.skip_fn(payload['file']):
+            if self.tracer.skip_fn(payload['file']):
                 raise KeyError  # Handled the same, avoids duplication.
             if not (payload.get('start') or payload.get('end')):
-                msg = fmt_msg('list', self.debugger.get_file(payload['file']))
+                msg = fmt_msg('list', self.tracer.get_file(payload['file']))
             else:
                 # Send back the slice of the file that they requested.
                 msg = fmt_msg(
                     'list',
-                    self.debugger.file_cache[payload['file']][
+                    self.tracer.file_cache[payload['file']][
                         payload.get('start'):payload.get('end')
                     ]
                 )
@@ -472,7 +516,7 @@ class CommandManager(object):
             )
             return self.next_command(err_msg)
         self.send(fmt_msg('disabled', None))
-        self.debugger.disable(payload)
+        self.tracer.disable(payload)
 
 
 class ServerReader(object):
