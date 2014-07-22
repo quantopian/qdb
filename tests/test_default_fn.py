@@ -19,8 +19,7 @@ from nose_parameterized import parameterized
 
 from qdb.debugger import (
     default_eval_fn,
-    default_repr_fn,
-    default_eval_exception_packager,
+    default_exception_serializer,
 )
 
 
@@ -37,8 +36,8 @@ class TestException(Exception):
 
 class DefaultFnTester(TestCase):
     """
-    Tester for the default functions that users can change.
-    This asserts that their behavior is as documented.
+    Tester for the default functions that qdb accepts as parameters.
+    This is to assert that default qdb works as intended.
     """
     @parameterized.expand([
         ('name_error', NameError()),
@@ -48,13 +47,13 @@ class DefaultFnTester(TestCase):
         ('test_var', 10),
         ('test_fn(1)', 2),
         ('test_list[0]', 0),
-        ('test_dict["t"]', 'est'),
+        ('test_dict["t"]', 'test'),
     ])
     def test_default_eval_fn(self, code, result):
         test_var = 10
         test_fn = lambda n: n + 1
         test_list = [0]
-        test_dict = {'t': 'est'}
+        test_dict = {'t': 'test'}
         if issubclass(type(result), Exception):
             with self.assertRaises(type(result)):
                 default_eval_fn(code, sys._getframe())
@@ -62,31 +61,12 @@ class DefaultFnTester(TestCase):
             self.assertEquals(result, default_eval_fn(code, sys._getframe()))
 
     @parameterized.expand([
-        ('test_1', 'repr on <class \'test_default_fn.Test1\'> raised: '
-         '(AttributeError: __repr__)'),
-        ('test_2', '__repr__'),
-    ])
-    def test_default_repr_fn(self, obj, result):
-        class Test1(object):
-            def __repr__(self):
-                raise AttributeError('__repr__')
-
-        class Test2(object):
-            def __repr__(self):
-                return '__repr__'
-
-        test_1 = Test1()
-        test_2 = Test2()
-
-        self.assertEquals(result, default_repr_fn(eval(obj)))
-
-    @parameterized.expand([
         (KeyError('key'), 'KeyError: \'key\''),
         (ValueError(10), 'ValueError: 10'),
         (TestException('e'), 'TestException: result = e')
     ])
-    def test_default_eval_exception_packager(self, exception, result):
+    def test_default_exception_serializer(self, exception, result):
         self.assertEquals(
             result,
-            default_eval_exception_packager(exception),
+            default_exception_serializer(exception),
         )

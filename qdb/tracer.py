@@ -13,7 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from bdb import Bdb, Breakpoint, checkfuncname, BdbQuit
-from itertools import imap
 import signal
 import sys
 import traceback
@@ -45,17 +44,6 @@ def default_exception_serializer(exception):
     The default exception serializer for user exceptions in eval.
     """
     return '%s: %s' % (type(exception).__name__, str(exception))
-
-
-def default_repr_fn(obj):
-    """
-    The default repr function that catches all exceptions that could be
-    raised by a repr and reports them to the user.
-    """
-    try:
-        return repr(obj)
-    except Exception as e:
-        return 'repr on %s raised: (%s: %s)' % (type(obj), type(e).__name__, e)
 
 
 class Qdb(Bdb, object):
@@ -110,7 +98,6 @@ class Qdb(Bdb, object):
         self._file_cache = {}
         self.redirect_stdout = redirect_stdout
         self.retry_attepts = retry_attepts
-        self.repr_fn = repr_fn or default_repr_fn
         self.skip_fn = skip_fn or (lambda _: False)
         self.pause_signal = pause_signal if pause_signal else signal.SIGUSR2
         self.uuid = str((uuid_fn if uuid_fn else uuid4)())
@@ -194,12 +181,18 @@ class Qdb(Bdb, object):
         try:
             self.get_line(filename, lineno)
         except IndexError:
-            raise QdbUnreachableBreakpoint(bp)
+            raise QdbUnreachableBreakpoint({
+                'file': filename,
+                'line': lineno,
+                'temp': temporary,
+                'cond': cond,
+                'func': funcname,
+            })
 
         list = self.breaks.setdefault(filename, [])
         if lineno not in list:
             list.append(lineno)
-        bp = Breakpoint(filename, lineno, temporary, cond, funcname)
+        Breakpoint(filename, lineno, temporary, cond, funcname)
 
     def clear_break(self, filename, lineno, *args, **kwargs):
         """

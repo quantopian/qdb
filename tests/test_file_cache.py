@@ -22,6 +22,9 @@ from qdb.comm import NopCmdManager
 
 class QdbFileCacheTester(TestCase):
     def test_file_cache_from_string(self):
+        """
+        Asserts that manual caching from a string works.
+        """
         contents = dedent(
             """\
             line 1
@@ -33,7 +36,7 @@ class QdbFileCacheTester(TestCase):
         db = Qdb(cmd_manager=NopCmdManager)
         db.cache_file('file', contents=contents)
 
-        # Check the whole string.
+        # Check the whole 'file'.
         self.assertEquals(db.get_file('file'), contents[:-1])  # drop '\n'
 
         for n in xrange(1, 5):
@@ -42,16 +45,22 @@ class QdbFileCacheTester(TestCase):
 
     def test_file_cache_from_disk(self):
         """
-        We must use a file that we know exists, so we will use this one.
+        Asserts that the disk caching works.
         """
-        filename = os.path.abspath(__file__)
+        # We will use this file, as it is the only file we know that exists.
+        # The first time this is run after a change, __file__ will point to
+        # the source code file; however, if we run this twice in a row, it
+        # points to the byte-compiled file.
+        filename = os.path.abspath(
+            __file__[:-1] if __file__.endswith('.pyc') else __file__
+        )
         db = Qdb(cmd_manager=NopCmdManager)
         db.cache_file(filename)
 
         with open(filename) as f:
-            contents = f.read()[:-1]  # drop '\n'
+            contents = f.read()[:-1]  # Drop the last newline.
 
-            # Assert that querying the file works.
+            # Assert that querying the entire file works.
             self.assertEquals(db.get_file(filename), contents)
 
             def infinite_list():
@@ -65,5 +74,6 @@ class QdbFileCacheTester(TestCase):
 
             for n, line in zip(infinite_list(), contents.splitlines()):
                 # Iterate over all the lines of the file, asserting that we
-                # have saved them correctly.
+                # have saved them correctly. This also asserts that the line
+                # indexing is working as intended.
                 self.assertEquals(db.get_line(filename, n), line)

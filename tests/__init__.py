@@ -12,28 +12,5 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-
-class QdbNopServer(object):
-    """
-    Nop server (do not serve connections or open a socket).
-    Use this server if you wish to manage qdb connections elsewhere.
-    """
-    address = ('', -1)
-
-    def __init__(self, *args, **kwargs):
-        pass
-
-    def start(self, *args, **kwargs):
-        pass
-
-    def stop(self, *args, **kwargs):
-        pass
-
-
-class QdbNopClientServer(QdbNopServer):
-    pass
-
-
-class QdbNopTracerServer(QdbNopServer):
-    pass
+from gevent.monkey import patch_all
+patch_all()  # Patch out the modules before executing the tests.

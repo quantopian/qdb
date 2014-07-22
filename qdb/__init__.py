@@ -14,13 +14,17 @@
 # limitations under the License.
 import sys
 
-from qdb.debugger import Qdb
-from qdb.errors import (
+from qdb.tracer import Qdb
+
+# Populate the namespace with potentially user facing errors. This allows the
+# user to more easily import them to catch.
+from qdb.errors import (  # NOQA
+    QdbAuthenticationError,
     QdbError,
     QdbQuit,
     QdbFailedToConnect,
     QdbCommunicationError,
-)  # Populates the namespace with any potentially user facing exceptions.
+)
 
 _version = '0.1.0'
 

@@ -24,6 +24,7 @@ from time import time
 
 import gevent
 from gevent.event import Event
+from geventwebsocket import WebSocketError
 from logbook import Logger
 
 try:
@@ -54,7 +55,6 @@ class DebuggingSession(namedtuple('DebuggingSessionBase', ['tracer',
     debugged, including the socket to the client, the websockets to the
     client, and the timers that manage new connections.
     """
-    slots = ()
     def __new__(cls, tracer=None, clients=None,
                 both_sides_event=None, timestamp=None):
         clients = clients or set()

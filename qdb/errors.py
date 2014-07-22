@@ -141,3 +141,18 @@ class QdbInvalidRoute(QdbError):
 
     def __repr__(self):
         return 'QdbInvalidRoute(%s)' % self.route
+
+
+class QdbAuthenticationError(QdbError):
+    """
+    Signals that the tracer tried to attach; however, it failed to authenticate
+    with the server.
+    """
+    def __init__(self, message):
+        self.message = message
+
+    def __str__(self):
+        return self.message
+
+    def __repr__(self):
+        return 'QdbInvalidRoute(%s)' % self.message

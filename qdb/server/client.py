@@ -12,14 +12,20 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import gevent.monkey
+gevent.monkey.patch_all()
+
 import json
 import re
 
 from gevent import pywsgi, Timeout
 from geventwebsocket import WebSocketError
 from geventwebsocket.handler import WebSocketHandler
+from logbook import Logger
 
 from qdb.errors import QdbInvalidRoute
+
+log = Logger('QdbClientServer')
 
 
 class QdbClientServer(object):
@@ -87,10 +93,10 @@ class QdbClientServer(object):
                 event['e']
             except (ValueError, TypeError) as v:
                 self.send_error(ws, 'event', str(v))
-                continue
+                return
             except KeyError:
                 self.send_error(ws, 'event', "No 'e' field sent")
-                continue
+                return
 
             yield event
 
@@ -98,37 +104,65 @@ class QdbClientServer(object):
         """
         Returns a single (valid) event.
         """
-        return next(self.get_events(ws))
+        try:
+            return next(self.get_events(ws))
+        except StopIteration:
+            return None
 
     def handle_client(self, environ, start_response):
         path = environ['PATH_INFO']
         ws = environ['wsgi.websocket']
-        match = self.route.match(path)
-        if not match:
-            # This did not match our route.
-            ws.close()
-            return
-        uuid = match.group(1)
-        start_event = None
-        with Timeout(self.auth_timeout, False):
-            start_event = self.get_event(ws)
-        if not start_event or start_event['e'] != 'start' \
-           or not self.client_auth_fn(start_event.get('p', '')):
-            # This is not a valid opening packet, or we never got one.
-            self.send_error(ws, 'auth', 'authentication failed')
-            ws.send(json.dumps({'e': 'disable'}))
-            ws.close()
-            return
+        addr = environ['REMOTE_ADDR']
+        try:
+            match = self.route.match(path)
+            if not match:
+                # This did not match our route.
+                return
+            log.info('Client request from %s' % addr)
+            uuid = match.group(1)
+            start_event = None
+            with Timeout(self.auth_timeout, False):
+                start_event = self.get_event(ws)
 
-        if not self.session_store.attach_client(uuid, ws):
-            # We are attaching to a client that does not exist.
-            ws.send(json.dumps({'e': 'disable'}))
-            ws.close()
-            return
+            failed = False
+            message = ''
 
-        self.session_store.send_to_tracer(uuid, event=start_event)
-        for event in self.get_events(ws):
-            self.session_store.send_to_tracer(uuid, event=event)
+            # Fall through the various ways to fail to generate a more helpful
+            # error message.
+            if not start_event:
+                message = 'No start event received'
+                failed = True
+            elif start_event['e'] != 'start':
+                message = "First event must be of type: 'start'"
+                failed = True
+            elif not self.client_auth_fn(start_event.get('p', '')):
+                log.warn('Client %s failed to authenticate' % addr)
+                message = 'Authentication failed'
+                failed = True
+
+            if failed:
+                try:
+                    self.send_error(ws, 'auth', message)
+                    ws.send(json.dumps({'e': 'disable'}))
+                except WebSocketError:
+                    # We are unable to send the disable message for some reason;
+                    # however, they already failed auth so suppress it and
+                    # close.
+                    pass
+                return
+
+            if not self.session_store.attach_client(uuid, ws):
+                # We are attaching to a client that does not exist.
+                ws.send(json.dumps({'e': 'disable'}))
+                return
+
+            self.session_store.send_to_tracer(uuid, event=start_event)
+            for event in self.get_events(ws):
+                self.session_store.send_to_tracer(uuid, event=event)
+
+        finally:
+            log.info('Closing websocket to client %s' % addr)
+            ws.close()
 
     def start(self, *args, **kwargs):
         """

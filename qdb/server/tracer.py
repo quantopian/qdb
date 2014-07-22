@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import socket
-from struct import unpack
+from struct import pack, unpack
 
 from gevent import Timeout
 from gevent.server import StreamServer
@@ -32,7 +32,12 @@ class QdbTracerServer(StreamServer):
     Listens for qdb tracer connections on a socket, spinning up new client
     connections.
     """
-    def __init__(self, session_store, host, port, tracer_auth_fn, auth_timeout):
+    def __init__(self,
+                 session_store,
+                 host,
+                 port,
+                 tracer_auth_fn,
+                 auth_timeout):
         self.auth_timeout = auth_timeout
         self.session_store = session_store
         self.tracer_auth_fn = tracer_auth_fn
@@ -77,19 +82,53 @@ class QdbTracerServer(StreamServer):
         Handles new connections from the tracers.
         """
         uuid = None
+        auth_failed_dict = {
+            'e': 'error',
+            'p': {
+                'type': 'auth',
+                'data': '',
+                }
+        }
+
+        message = ''
+        failed = False
+
         try:
             start_event = None
             uuid = None
             with Timeout(self.auth_timeout, False):
                 try:
                     start_event = self.read_event(conn)
-                    uuid = start_event['p']['uuid']
-                    if not self.tracer_auth_fn(start_event['p']['auth']):
-                        return
+                    if start_event['e'] == 'start':
+                        uuid = start_event['p']['uuid']
+                        if not self.tracer_auth_fn(
+                                start_event['p'].get('auth', '')
+                        ):
+                            # We failed the authentication check.
+                            log.warn('Bad authentication message from (%s, %d)'
+                                     % addr)
+                            message = 'Authentication failed'
+                            failed = True
+                    else:
+                        message = "First event must be of type: 'start'"
+                        failed = True
                 except KeyError:
-                    return
+                    message = "Missing 'uuid' field"
+                    failed = True
             if not start_event:
-                log.info('No start message was sent from %s' % addr)
+                # No start_event was ever recieved because we timed out.
+                log.info('No start message was sent from (%s, %d)' % addr)
+                message = 'No start event received'
+                failed = True
+
+            if failed:
+                # If we have an error, we need to report that back to the
+                # trace so that it may raise a QdbAuthenticationError in the
+                # user's code.
+                auth_failed_dict['p']['data'] = message
+                err_msg = pickle.dumps(auth_failed_dict)
+                conn.sendall(pack('>i', len(err_msg)))
+                conn.sendall(err_msg)
                 return
 
             log.info('Assigning stream from %s to session %s' % (addr, uuid))
@@ -102,3 +141,4 @@ class QdbTracerServer(StreamServer):
                 self.session_store.send_to_clients(uuid, event=event)
         finally:
             log.info('Closing stream from %s to session %s' % (addr, uuid))
+            conn.close()

@@ -36,6 +36,7 @@ from qdb.errors import (
     QdbBreakpointReadError,
     QdbCommunicationError,
     QdbUnreachableBreakpoint,
+    QdbAuthenticationError,
 )
 
 log = Logger('Qdb')
@@ -205,7 +206,7 @@ class CommandManager(object):
         self.send_event(
             'watchlist',
             [{'expr': k, 'value': v}
-             for k,v in self.debugger.watchlist.iteritems()],
+             for k, v in self.debugger.watchlist.iteritems()],
         )
 
     def send_print(self, input_, output):
@@ -242,9 +243,10 @@ class CommandManager(object):
             'stack',
             [self.fmt_stackframe(stackframe, line)
              for stackframe, line in self.debugger.stack
-             if not self.debugger.skip_fn(self.debugger.canonic(
-                     stackframe.f_code.co_filename
-             ))],
+             if not
+             self.debugger.skip_fn(
+                 self.debugger.canonic(stackframe.f_code.co_filename)
+             )],
         )
 
     def send_stdout(self):
@@ -322,7 +324,10 @@ class CommandManager(object):
                     yield lambda: command(event.get('p'))
 
     def handle_error(self, payload):
-        raise QdbCommunicationError(payload)
+        if payload['type'] == 'auth':
+            raise QdbAuthenticationError(payload['data'])
+        else:
+            raise QdbCommunicationError(payload)
 
     def next_command(self, msg=None):
         """
@@ -378,7 +383,6 @@ class CommandManager(object):
         if not self.payload_check(payload, 'set_watch'):
             return self.next_command()
 
-        stackframe = self.debugger.curframe
         for w in payload:
             self.debugger.watchlist[w] = ''
 
