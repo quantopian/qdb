@@ -34,7 +34,7 @@
   '("b" "break"
     "c" "continue"
     "cl" "clear"
-    "list" "l"
+    "l" "list"
     "n" "next"
     "q" "quit"
     "s" "step"
@@ -73,7 +73,7 @@
 
 
 (defvar qdb-default-uuid "qdb")
-(defvar qdb-default-addr "wss://localhost:8001/websocket/{uuid}")
+(defvar qdb-default-addr "ws://localhost:8002/{uuid}")
 (defvar qdb-default-auth "")
 
 (defun run-qdb (uuid addr auth)

@@ -168,10 +168,12 @@ class QdbClientServer(object):
         """
         Starts up this server.
         """
+        log.info('Starting qdb.server.client')
         self._server.start()
 
     def stop(self, *args, **kwargs):
         """
         Stops the server.
         """
+        log.info('Stopping qdb.server.client')
         self._server.stop()

@@ -103,7 +103,8 @@ class QdbServer(object):
         """
         Starts accepting new connections.
         """
-        gevent.spawn(self.session_store.start)
+        log.info('Starting qdb.server')
+        self.session_store.start()
         self._running = True
         self._stop.clear()
         self.tracer_server.start()
@@ -121,6 +122,7 @@ class QdbServer(object):
         """
         Stops the internal servers.
         """
+        log.info('Stopping qdb.server')
         self.tracer_server.stop()
         self.client_server.stop()
         self.session_store.stop()

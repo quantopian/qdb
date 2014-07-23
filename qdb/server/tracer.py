@@ -46,6 +46,14 @@ class QdbTracerServer(StreamServer):
             handle=self.handle_tracer,
         )
 
+    def start(self):
+        log.info('Starting qdb.server.tracer')
+        super(QdbTracerServer, self).start()
+
+    def stop(self):
+        log.info('Stopping qdb.server.tracer')
+        super(QdbTracerServer, self).stop()
+
     def read_events(self, conn):
         """
         Generator that yields the events off the socket while we are running

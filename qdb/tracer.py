@@ -343,8 +343,7 @@ class Qdb(Bdb, object):
             raise QdbQuit()  # Rewrap as a QdbError object.
 
     def user_call(self, stackframe, arg):
-        if self.stop_here(stackframe):
-            self.user_line(stackframe)
+        self.user_line(stackframe)
 
     def user_line(self, stackframe):
         self.setup_stack(stackframe, None)

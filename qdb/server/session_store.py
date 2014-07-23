@@ -113,7 +113,7 @@ class SessionStore(object):
         self.attach_timeout = attach_timeout
         self.timeout_disable_mode = timeout_disable_mode
         self._sessions = {}
-        self._running_gc = False
+        self.gc_glet = None
 
     def __contains__(self, uuid):
         """
@@ -134,7 +134,7 @@ class SessionStore(object):
         """
         return uuid in self._sessions and self._sessions[uuid].tracer()
 
-    def start(self):
+    def _run_gc(self):
         """
         Runs the gc over the session store, clearing any sessions that appear
         inactive. This does not clear algos as soon as timeout, but instead
@@ -155,16 +155,21 @@ class SessionStore(object):
                     log.info('Session %s was marked inactive, killing' % uuid)
                     self.slaughter(uuid, self.timeout_disable_mode)
 
-        self._running_gc = True
-        while self._running_gc:
+        while True:
             gc_pass()
             gevent.sleep(self.sweep_time)
+
+    def start(self):
+        """
+        Starts the session store service.
+        """
+        self._gc_glet = gevent.spawn(self._run_gc)
 
     def stop(self):
         """
         Stops the session store service that is running.
         """
-        self._running_gc = False
+        self._gc_glet.kill(timeout=5)
         self.slaughter_all()
 
     def attach_tracer(self, uuid, socket):

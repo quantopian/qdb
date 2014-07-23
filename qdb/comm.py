@@ -245,7 +245,7 @@ class RemoteCommandManager(CommandManager):
     This is the default Qdb command manager.
     """
     def __init__(self, tracer, auth_msg):
-        super(RemoteCommandManager, self).__init__()
+        super(RemoteCommandManager, self).__init__(tracer, auth_msg)
 
         # Construct a pipe to talk to the reader.
         self.pipe, child_end = Pipe()
@@ -512,10 +512,9 @@ class RemoteCommandManager(CommandManager):
         if payload not in ['soft', 'hard']:
             err_msg = fmt_err_msg(
                 'disable',
-                'payload must be either \'soft\' or \'hard\''
+                "payload must be either 'soft' or 'hard'"
             )
             return self.next_command(err_msg)
-        self.send(fmt_msg('disabled', None))
         self.tracer.disable(payload)
 
 

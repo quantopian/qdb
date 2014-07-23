@@ -24,13 +24,15 @@ import os
 
 from websocket import create_connection
 
-DEFAULT_WS_ADDRESS = 'ws://localhost:8002/websocket/{uuid}'
+DEFAULT_WS_ADDRESS = 'ws://localhost:8002/{uuid}'
 DEFAULT_UUID = 'qdb'
 
 # The format of the outfile
 FILE_FORMAT = '/tmp/qdb/.%s'
+# The directory to store the output files.
+TMP_DIR = '/tmp/qdb/'
 
-_version = '0.1.0.0'
+_version = '0.1.0'
 
 
 class QdbRepl(Cmd, object):
@@ -301,5 +303,7 @@ if __name__ == '__main__':
     repl.wsaddress = args.ws_address
     repl.uuid = args.uuid
     repl.auth_msg = args.auth_msg
+    if not os.path.isdir(TMP_DIR):
+        os.mkdir(TMP_DIR)
     repl.cmdloop()
     os.remove(repl.filename)  # Cleans up the tmp output file.
