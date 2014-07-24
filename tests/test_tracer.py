@@ -137,22 +137,22 @@ class TracerTester(TestCase):
         # Queue up a next command to next over the function call.
         db.cmd_manager.enqueue(lambda t: t.set_next(t.curframe))
         # Queue up a sleep so that we block after calling next.
-        # This would cause us to NOT execute the mutable[0] = True line of f
+        # This would cause us to NOT execute the f_called[0] = True line of f
         # had we only called set_step. This is asserted afterwards.
         db.cmd_manager.user_wait(0.2)
 
         # A mutable structure to check if f is called.
-        mutable = [False]
+        f_called = [False]
 
         def f():
-            mutable[0] = True
+            f_called[0] = True
 
         with Timeout(0.1, False):
             db.set_trace()
             f()
 
         # We hit that line in f, so it should now be True.
-        self.assertTrue(mutable[0])
+        self.assertTrue(f_called[0])
 
         # Assert that we are currently executing the line we think we should
         # be executing. Since we are just stepping, this should be setting
@@ -165,7 +165,7 @@ class TracerTester(TestCase):
         sys.settrace(None)
         db = Qdb(cmd_manager=QueueCommandManager)
 
-        mutable[0] = False
+        f_called[0] = False
 
         # This time we will be only stepping, so we should not execute the
         # entire call to f.
@@ -177,7 +177,7 @@ class TracerTester(TestCase):
             f()
 
         # We should not have hit this line in f.
-        self.assertFalse(mutable[0])
+        self.assertFalse(f_called[0])
         # Since we only stepped once, this is the last time we set the frame.
         self.assertEqual(
             db.get_line(self.filename, db.curframe.f_lineno),

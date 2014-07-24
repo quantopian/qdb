@@ -27,10 +27,10 @@ from websocket import create_connection
 DEFAULT_WS_ADDRESS = 'ws://localhost:8002/{uuid}'
 DEFAULT_UUID = 'qdb'
 
-# The format of the outfile
-FILE_FORMAT = '/tmp/qdb/.%s'
 # The directory to store the output files.
 TMP_DIR = '/tmp/qdb/'
+# The format of the outfile
+FILE_FORMAT = os.path.join(TMP_DIR, '.%s')
 
 _version = '0.1.0'
 
@@ -186,12 +186,10 @@ class QdbRepl(Cmd, object):
             return
         args = arg.split()
         file_ = args[0]
-        start = None
-        end = None
+        start = end = None
         try:
-            start = args[1]
-            end = args[2]
-        except IndexError:
+            start, end = args[1:]
+        except ValueError:
             pass
         self.send_command('list', {
             'file': file_,

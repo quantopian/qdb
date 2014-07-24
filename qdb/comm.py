@@ -218,7 +218,7 @@ class CommandManager(object):
     @abstractmethod
     def stop(self):
         """
-        Stop aquuiring new commands.
+        Stop acquiring new commands.
         Use this to release and resources needed to generate the commands.
         """
         raise NotImplementedError
@@ -278,7 +278,8 @@ class RemoteCommandManager(CommandManager):
         # Create the comminicator assuming we did not raise any exceptions.
         self.reader = Process(
             target=ServerReader,
-            args=(child_end, os.getpid(), self.socket),
+            args=(child_end, os.getpid(), self.socket,
+                  self.tracer.pause_signal),
         )
         self._start(auth_msg)
 
@@ -290,18 +291,19 @@ class RemoteCommandManager(CommandManager):
             fmt_msg(
                 'start', {
                     'uuid': self.tracer.uuid,
-                    'auth': auth_msg
+                    'auth': auth_msg,
+                    'local': (0, 0),
                 }
             )
         )
         self.reader.start()
-        self._command_generator = self._get_commands()
         atexit.register(self.stop)
 
     def stop(self):
         """
         Stops the command manager, freeing its resources.
         """
+        atexit.unregister(self.stop)  # We have already cleaned up.
         self.reader.terminate()
         self.socket.close()
 
@@ -385,7 +387,7 @@ class RemoteCommandManager(CommandManager):
         Processes the next message from the reader.
         """
         try:
-            return next(self._command_generator)()
+            return next(self._get_commands())()
         except StopIteration:
             raise QdbCommunicationError()
 
@@ -518,6 +520,32 @@ class RemoteCommandManager(CommandManager):
         self.tracer.disable(payload)
 
 
+def get_events_from_socket(self, sck):
+    """
+    Yields valid events from the server socket.
+    """
+    while True:
+        try:
+            cmd_len = self.server_comm.recv(4)
+            if len(cmd_len) != 4:
+                # We did not get a valid length, the stream is corrupt.
+                return
+            cmd_len = unpack('>i', cmd_len)[0]
+            pre_unpickle = self.server_comm.recv(cmd_len)
+            cmd = pickle.loads(pre_unpickle)
+        except socket.error as e:
+            # We can no longer talk the the server.
+            yield {'e': 'error', 'p': e}
+            return
+        except pickle.UnpicklingError as p:
+            msg = fmt_err_msg('pickle', str(p))
+            sck.sendall(pack('>i', len(msg)))
+            sck.sendall(msg)
+        else:
+            # Yields only valid commands.
+            yield cmd
+
+
 class ServerReader(object):
     """
     Object that reads from the server asyncronously from the process
@@ -525,7 +553,7 @@ class ServerReader(object):
     """
     def __init__(self, debugger_pipe, session_pid, server_comm,
                  pause_signal=None):
-        self.pause_signal = signal.SIGUSR2
+        self.pause_signal = pause_signal or signal.SIGUSR2
         self.debugger_pipe = debugger_pipe
         self.server_comm = server_comm
         self.session_pid = session_pid
@@ -539,37 +567,12 @@ class ServerReader(object):
         """
         os.kill(self.session_pid, self.pause_signal)
 
-    def get_events(self):
-        """
-        Infinitly yields valid events off of the socket.
-        """
-        while True:
-            try:
-                cmd_len = self.server_comm.recv(4)
-                if len(cmd_len) != 4:
-                    # We did not get a valid length, the stream is corrupt.
-                    return
-                cmd_len = unpack('>i', cmd_len)[0]
-                pre_unpickle = self.server_comm.recv(cmd_len)
-                cmd = pickle.loads(pre_unpickle)
-            except socket.error as e:
-                # We can no longer talk the the server.
-                self.debugger_pipe.send({'e': 'error', 'p': e})
-                return
-            except pickle.UnpicklingError as p:
-                msg = fmt_err_msg('pickle', str(p))
-                self.server_comm.sendall(pack('>i', len(msg)))
-                self.server_comm.sendall(msg)
-            else:
-                # Yields only valid commands.
-                yield cmd
-
     def process_messages(self):
         """
         Infinitly reads events off the server, if it is a pause, then it pauses
         the process, otherwise, it passes the message along.
         """
-        for event in self.get_events():
+        for event in get_events_from_socket(self.server_comm):
             if event['e'] == 'pause':
                 self.command_pause()
             else:
@@ -578,3 +581,30 @@ class ServerReader(object):
         # If we get here, we had a socket error that dropped us out of
         # get_events(), signal this to the process.
         self.debugger_pipe.send({'e': 'disable', 'e': 'soft'})
+
+
+class ServerLocalCommandManager(RemoteCommandManager):
+    """
+    Use this command manager if you know for certain that the tracer will be
+    running on the same machine as the server. This circumvents the need for
+    spinning up the Reader process and lets the server take over some of that
+    responsibility. While using a normal RemoteCommandManager will work, this
+    incurs less overhead.
+    """
+    def _start(self, auth_msg):
+        """
+        Begins processing commands from the server.
+        """
+        self.send(
+            fmt_msg(
+                'start', {
+                    'uuid': self.tracer.uuid,
+                    'auth': auth_msg,
+                    'local': (os.getpid(), self.tracer.pause_signal),
+                }
+            )
+        )
+        self.reader = None
+
+    def _get_events(self):
+        return get_events_from_socket(self.socket)

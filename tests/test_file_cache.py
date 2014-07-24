@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License
 import os
+from itertools import count, izip
 from textwrap import dedent
 from unittest import TestCase
 
@@ -63,16 +64,7 @@ class QdbFileCacheTester(TestCase):
             # Assert that querying the entire file works.
             self.assertEquals(db.get_file(filename), contents)
 
-            def infinite_list():
-                """
-                Generator that yields [1..]
-                """
-                n = 1
-                while True:
-                    yield n
-                    n += 1
-
-            for n, line in zip(infinite_list(), contents.splitlines()):
+            for n, line in izip(count(start=1), contents.splitlines()):
                 # Iterate over all the lines of the file, asserting that we
                 # have saved them correctly. This also asserts that the line
                 # indexing is working as intended.

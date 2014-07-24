@@ -41,7 +41,7 @@ class QdbClientServer(object):
         route, where route is a regular expression (as a string or regex
         object) that defines where to look for connections.
         For example:
-            `/debug_sessions/(.+)`
+            `/(.+)`
         There should be exactly one group in the route, this will be the uuid
         match.
         The auth_timeout is the amount of time to leave a socket open awaiting

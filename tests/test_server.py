@@ -23,8 +23,7 @@ from websocket import create_connection
 
 from qdb.server import (
     QdbServer,
-    QdbNopClientServer,
-    QdbNopTracerServer,
+    QdbNopServer,
 )
 from qdb.server.server import DEFAULT_ROUTE_FMT
 
@@ -34,14 +33,17 @@ except ImportError:
     import pickle
 
 
+def fmt_msg(event, payload):
+    return {
+        'e': event,
+        'p': payload,
+    }
+
 def send_tracer_event(sck, event, payload):
     """
     Sends an event over the socket.
     """
-    msg = pickle.dumps({
-        'e': event,
-        'p': payload,
-    })
+    msg = pickle.dumps(fmt_msg(event, payload))
     sck.sendall(pack('>i', len(msg)))
     sck.sendall(msg)
 
@@ -50,12 +52,7 @@ def send_client_event(ws, event, payload):
     """
     Sends an event to the client.
     """
-    ws.send(
-        json.dumps({
-            'e': event,
-            'p': payload,
-        })
-    )
+    ws.send(json.dumps(fmt_msg(event, payload)))
 
 
 def recv_tracer_event(sck):
@@ -66,14 +63,14 @@ def recv_tracer_event(sck):
     if len(length) != 4:
         return None
     rlen = unpack('>i', length)[0]
-    bytes_recieved = 0
+    bytes_received = 0
     resp = ''
     with Timeout(1, False):
-        while bytes_recieved < rlen:
-            resp += sck.recv(rlen - bytes_recieved)
-            bytes_recieved = len(resp)
+        while bytes_received < rlen:
+            resp += sck.recv(rlen - bytes_received)
+            bytes_received = len(resp)
 
-    if bytes_recieved != rlen:
+    if bytes_received != rlen:
         return None
     return pickle.loads(resp)
 
@@ -91,11 +88,11 @@ class ServerTester(TestCase):
         Tests starting and stopping the server.
         """
         server = QdbServer()
-        self.assertFalse(server.is_running())
+        self.assertFalse(server.is_running)
         server.start()
-        self.assertTrue(server.is_running())
+        self.assertTrue(server.is_running)
         server.stop()
-        self.assertFalse(server.is_running())
+        self.assertFalse(server.is_running)
 
     def test_runforever_exit(self):
         """
@@ -106,7 +103,7 @@ class ServerTester(TestCase):
         with Timeout(1, False):
             spawn_later(0.3, server.stop)  # Stop the server in 0.3 seconds.
             server.serve_forever()
-        self.assertFalse(server.is_running())
+        self.assertFalse(server.is_running)
 
     def test_bad_auth_client(self):
         """
@@ -116,17 +113,14 @@ class ServerTester(TestCase):
             client_host='localhost',
             client_port=8003,
             client_auth_fn=lambda _: False,  # Fail all new clients.
-            tracer_server=QdbNopTracerServer(),
+            tracer_server=QdbNopServer(),
         )
         server.start()
 
-        auth_failed_dict = {
-            'e': 'error',
-            'p': {
-                'type': 'auth',
-                'data': 'Authentication failed'
-            }
-        }
+        auth_failed_dict = fmt_msg('error', {
+            'type': 'auth',
+            'data': 'Authentication failed'
+        })
         disable_dict = {'e': 'disable'}
 
         auth_failed_msg = ''
@@ -136,7 +130,7 @@ class ServerTester(TestCase):
             ws = create_connection(
                 'ws://localhost:8003' + DEFAULT_ROUTE_FMT.format(uuid='test')
             )
-            ws.send(json.dumps({'e': 'start', 'p': 'friendzoned-again'}))
+            send_client_event(ws, 'start', 'friendzoned-again')
 
             with Timeout(2, False):
                 # The server should time us out in 1 second and send back these
@@ -148,27 +142,24 @@ class ServerTester(TestCase):
             self.assertEquals(disable_msg, json.dumps(disable_dict))
             self.assertFalse('test' in server.session_store)
         finally:
-            server.stop
+            server.stop()
 
     def test_client_auth_timeout(self):
         server = QdbServer(
             client_host='localhost',
             client_port=8004,
             auth_timeout=1,  # Timeout after 1 second.
-            tracer_server=QdbNopTracerServer(),
+            tracer_server=QdbNopServer(),
         )
         server.start()
         ws = create_connection(
             'ws://localhost:8004' + DEFAULT_ROUTE_FMT.format(uuid='test')
         )
 
-        auth_failed_dict = {
-            'e': 'error',
-            'p': {
-                'type': 'auth',
-                'data': 'No start event received'
-            }
-        }
+        auth_failed_dict = fmt_msg('error', {
+            'type': 'auth',
+            'data': 'No start event received'
+        })
         disable_dict = {'e': 'disable'}
 
         auth_failed_msg = ''
@@ -195,7 +186,7 @@ class ServerTester(TestCase):
             tracer_host='localhost',
             tracer_port=8001,
             tracer_auth_fn=lambda _: False,
-            client_server=QdbNopClientServer(),
+            client_server=QdbNopServer(),
         )
         server.start()
 
@@ -212,7 +203,8 @@ class ServerTester(TestCase):
 
             send_tracer_event(sck, 'start', {
                 'uuid': 'test',
-                'auth': 'friendzoned-again'
+                'auth': 'friendzoned-again',
+                'local': (0, 0),
             })
             # We failed auth so the socket should be closed.
             self.assertEqual(auth_failed_dict,
@@ -231,7 +223,7 @@ class ServerTester(TestCase):
         server = QdbServer(
             tracer_host='localhost',
             tracer_port=8006,
-            client_server=QdbNopClientServer(),
+            client_server=QdbNopServer(),
             auth_timeout=1,  # 1 second auth timeout.
         )
         server.start()
@@ -271,7 +263,11 @@ class ServerTester(TestCase):
         server.start()
         try:
             tracer = socket.create_connection(('localhost', 8007))
-            send_tracer_event(tracer, 'start', {'uuid': 'test', 'auth': ''})
+            send_tracer_event(tracer, 'start', {
+                'uuid': 'test',
+                'auth': '',
+                'local': (0, 0),
+            })
             client = create_connection(
                 'ws://localhost:8008' + DEFAULT_ROUTE_FMT.format(uuid='test')
             )

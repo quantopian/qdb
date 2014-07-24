@@ -12,6 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import os
 import socket
 from struct import pack, unpack
 
@@ -25,6 +26,14 @@ except ImportError:
     import pickle
 
 log = Logger('QdbTracerServer')
+
+
+class AuthenticationFailed(Exception):
+    """
+    Signals that the authentication failed for some reason.
+    """
+    def __init__(self, message):
+        self.message = message
 
 
 class QdbTracerServer(StreamServer):
@@ -66,22 +75,20 @@ class QdbTracerServer(StreamServer):
                     # We did not get a valid length, the stream is corrupt.
                     return
                 rlen = unpack('>i', rlen)[0]
-                bytes_recieved = 0
+                bytes_received = 0
                 resp = ''
                 with Timeout(1, False):
-                    while bytes_recieved < rlen:
-                        resp += conn.recv(rlen - bytes_recieved)
-                        bytes_recieved = len(resp)
+                    while bytes_received < rlen:
+                        resp += conn.recv(rlen - bytes_received)
+                        bytes_received = len(resp)
 
-                if bytes_recieved != rlen:
+                if bytes_received != rlen:
                     return  # We are not getting bytes anymore.
 
                 resp = pickle.loads(resp)
                 resp['e']
-            except (socket.error, EOFError):
+            except (socket.error, pickle.UnpicklingError, KeyError):
                 return  # It appears something died, kill this now.
-            except (pickle.UnpicklingError, KeyError):
-                continue  # ignore bad messages.
 
             yield resp
 
@@ -94,11 +101,34 @@ class QdbTracerServer(StreamServer):
         except StopIteration:
             return {}
 
+    def validate_start_event(self, start_event, addr):
+        """
+        Validates a start_event.
+        Returns a tuple with (uuid, local) or raises an exception
+        describing the error.
+        """
+        uuid = None
+        local = (0, 0)
+        try:
+            if start_event['e'] == 'start':
+                local = start_event['p']['local']
+                uuid = start_event['p']['uuid']
+                if not self.tracer_auth_fn(start_event['p'].get('auth', '')):
+                    # We failed the authentication check.
+                    log.warn('Bad authentication message from (%s, %d)' % addr)
+                    raise AuthenticationFailed('Authentication failed')
+            else:
+                raise AuthenticationFailed(
+                    "First event must be of type: 'start'"
+                )
+        except KeyError as k:
+            raise AuthenticationFailed("Missing %s field" % str(k))
+        return uuid, local
+
     def handle_tracer(self, conn, addr):
         """
         Handles new connections from the tracers.
         """
-        uuid = None
         auth_failed_dict = {
             'e': 'error',
             'p': {
@@ -107,38 +137,26 @@ class QdbTracerServer(StreamServer):
                 }
         }
 
+        uuid = None
+        local_pid, pause_signal = 0, 0
         message = ''
-        failed = False
 
         try:
             start_event = None
-            uuid = None
             with Timeout(self.auth_timeout, False):
-                try:
-                    start_event = self.read_event(conn)
-                    if start_event['e'] == 'start':
-                        uuid = start_event['p']['uuid']
-                        if not self.tracer_auth_fn(
-                                start_event['p'].get('auth', '')
-                        ):
-                            # We failed the authentication check.
-                            log.warn('Bad authentication message from (%s, %d)'
-                                     % addr)
-                            message = 'Authentication failed'
-                            failed = True
-                    else:
-                        message = "First event must be of type: 'start'"
-                        failed = True
-                except KeyError:
-                    message = "Missing 'uuid' field"
-                    failed = True
+                start_event = self.read_event(conn)
             if not start_event:
                 # No start_event was ever recieved because we timed out.
                 log.info('No start message was sent from (%s, %d)' % addr)
                 message = 'No start event received'
-                failed = True
+            else:
+                try:
+                    uuid, local = self.validate_start_event(start_event, addr)
+                    local_pid, pause_signal = local
+                except AuthenticationFailed as a:
+                    message = a.message
 
-            if failed:
+            if message:
                 # If we have an error, we need to report that back to the
                 # trace so that it may raise a QdbAuthenticationError in the
                 # user's code.
@@ -154,6 +172,12 @@ class QdbTracerServer(StreamServer):
                 return  # No browser so the attach failed.
 
             for event in self.read_events(conn):
+                # If the tracer is running local to the server, we can avoid
+                # starting a reader process to raise the pause signal in the
+                # tracer, This event should not get passed along.
+                if local_pid and event['e'] == 'pause':
+                    os.kill(local_pid, pause_signal)
+                    continue
                 # Send the serialized event back to the browser.
                 self.session_store.send_to_clients(uuid, event=event)
         finally:

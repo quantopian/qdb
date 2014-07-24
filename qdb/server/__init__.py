@@ -16,4 +16,4 @@ from qdb.server.client import QdbClientServer  # NOQA
 from qdb.server.server import QdbServer  # NOQA
 from qdb.server.session_store import SessionStore  # NOQA
 from qdb.server.tracer import QdbTracerServer  # NOQA
-from qdb.server.nop import QdbNopClientServer, QdbNopTracerServer  # NOQA
+from qdb.server.nop import QdbNopServer  # NOQA

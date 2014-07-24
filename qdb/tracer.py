@@ -50,6 +50,17 @@ class Qdb(Bdb, object):
     """
     The Quantopian Remote Debugger.
     """
+    _instance = None
+
+    def __new__(cls, *args, **kwargs):
+        """
+        Qdb objects are singletons that persist until their disable method is
+        called.
+        """
+        if not cls._instance:
+            cls._instance = super(Qdb, cls).__new__(cls, *args, **kwargs)
+        return cls._instance
+
     def __init__(self,
                  host='localhost',
                  port=8001,
@@ -61,7 +72,6 @@ class Qdb(Bdb, object):
                  pause_signal=None,
                  redirect_stdout=True,
                  retry_attepts=10,
-                 repr_fn=None,
                  uuid_fn=None,
                  cmd_manager=None):
         """
@@ -111,16 +121,8 @@ class Qdb(Bdb, object):
         self.forget()
         super(Qdb, self).__init__()
         if not cmd_manager:
-            self._connect(auth_msg)
-        else:
-            self.cmd_manager = cmd_manager(self, auth_msg)
-
-    def _connect(self, auth_msg):
-        """
-        Attempts to connect to the server.
-        On success, returns None, raises a QdbFailedToConnect error otherwise.
-        """
-        self.cmd_manager = RemoteCommandManager(self, auth_msg)
+            cmd_manager = RemoteCommandManager(self, auth_msg)
+        self.cmd_manager = cmd_manager(self, auth_msg)
 
     def get_line(self, filename, line):
         """
@@ -395,6 +397,8 @@ class Qdb(Bdb, object):
         """
         Stops tracing.
         """
+        # Remove this instance so that new ones may be created.
+        self.__class__._instance = None
         try:
             if mode == 'soft':
                 self.clear_all_breaks()
@@ -406,6 +410,10 @@ class Qdb(Bdb, object):
                 raise ValueError("mode must be 'hard' or 'soft'")
         finally:
             self.cmd_manager.stop()
+
+    def __exit__(self, exc):
+        if not exc or isinstance(exc, QdbQuit):
+            self.disable('soft')
 
     def set_trace(self, stackframe=None, stop=True):
         """

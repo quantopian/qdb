@@ -226,7 +226,7 @@ class SessionStore(object):
             try:
                 msg_dict = {
                     'e': event['e'],
-                    'p': event.pop('p', None)
+                    'p': event.get('p')
                 }
                 msg = pickle.dumps(msg_dict)
             except pickle.PicklingError as p:

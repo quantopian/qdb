@@ -50,18 +50,23 @@ class DefaultFnTester(TestCase):
         ('test_dict["t"]', 'test'),
     ])
     def test_default_eval_fn(self, code, result):
+        """
+        Test that the default_eval_fn behaves like normal eval.
+        """
+        # We ignore flake8 warnings here because this code is only called from
+        # within the string that we are evaling.
         test_var = 10  # NOQA
         test_fn = lambda n: n + 1  # NOQA
         test_list = [0]  # NOQA
         test_dict = {'t': 'test'}  # NOQA
-        if issubclass(type(result), Exception):
+        if isinstance(result, Exception):
             with self.assertRaises(type(result)):
                 default_eval_fn(code, sys._getframe())
         else:
             self.assertEquals(result, default_eval_fn(code, sys._getframe()))
 
     @parameterized.expand([
-        (KeyError('key'), 'KeyError: \'key\''),
+        (KeyError('key'), "KeyError: 'key'"),
         (ValueError(10), 'ValueError: 10'),
         (TestException('e'), 'TestException: result = e')
     ])

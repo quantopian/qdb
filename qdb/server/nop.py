@@ -29,11 +29,3 @@ class QdbNopServer(object):
 
     def stop(self, *args, **kwargs):
         pass
-
-
-class QdbNopClientServer(QdbNopServer):
-    pass
-
-
-class QdbNopTracerServer(QdbNopServer):
-    pass
