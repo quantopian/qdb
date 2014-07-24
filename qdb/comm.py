@@ -17,20 +17,21 @@ from abc import ABCMeta, abstractmethod
 import atexit
 from bdb import Breakpoint
 from contextlib import contextmanager
+import errno
 
 try:
     import cPickle as pickle
 except ImportError:
     import pickle
 
-from multiprocessing import Process, Pipe
 import os
 import signal
-import socket
 from StringIO import StringIO
 from struct import pack, unpack
 import sys
 
+from gevent import socket, Timeout
+import gipc
 from logbook import Logger
 
 from qdb.errors import (
@@ -216,6 +217,13 @@ class CommandManager(object):
         raise NotImplementedError
 
     @abstractmethod
+    def start(self):
+        """
+        Start acquiring new commands.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
     def stop(self):
         """
         Stop acquiring new commands.
@@ -235,6 +243,9 @@ class NopCmdManager(CommandManager):
     def send(self, msg):
         pass
 
+    def start(self):
+        pass
+
     def stop(self):
         pass
 
@@ -244,49 +255,62 @@ class RemoteCommandManager(CommandManager):
     Manager that processes commands from the server.
     This is the default Qdb command manager.
     """
-    def __init__(self, tracer, auth_msg):
+    def __init__(self, tracer, auth_msg=''):
         super(RemoteCommandManager, self).__init__(tracer, auth_msg)
 
         # Construct a pipe to talk to the reader.
-        self.pipe, child_end = Pipe()
+        self.pipe = None
 
         # Attach the signal handler to manage the pause command.
         signal.signal(tracer.pause_signal, self._pause_handler)
 
         log.info('Connecting to (%s, %d)' % tracer.address)
         self.socket = None
+        self.reader = None
+
+    def _socket_connect(self):
+        """
+        Connects to the socket or raise a QdbFailedToConnect error.
+        """
         for n in xrange(self.tracer.retry_attepts):
+            # Try to connect to the server.
             try:
-                self.socket = socket.create_connection(tracer.address)
+                self.socket = socket.create_connection(self.tracer.address)
+                # If we made it here, we connected and no longer need to retry.
                 break
             except socket.error:
                 log.warn(
                     'Client %s failed to connect to (%s, %d) on attempt %d...'
-                    % (self.tracer.uuid, tracer.address[0],
-                       tracer.address[1], n + 1)
+                    % (self.tracer.uuid, self.tracer.address[0],
+                       self.tracer.address[1], n + 1)
                 )
         if self.socket is None:
             log.warn(
                 'Failed to connect to (%s, %d), no longer retying.'
-                % tracer.address
+                % self.tracer.address
             )
-            raise QdbFailedToConnect(tracer.address, tracer.retry_attepts)
+            raise QdbFailedToConnect(
+                self.tracer.address,
+                self.tracer.retry_attepts
+            )
         log.info('Client %s connected to (%s, %d)'
                  % (self.tracer.uuid, self.tracer.address[0],
                     self.tracer.address[1]))
 
-        # Create the comminicator assuming we did not raise any exceptions.
-        self.reader = Process(
-            target=ServerReader,
-            args=(child_end, os.getpid(), self.socket,
-                  self.tracer.pause_signal),
-        )
-        self._start(auth_msg)
-
-    def _start(self, auth_msg):
+    def start(self, auth_msg):
         """
         Begins processing commands from the server.
         """
+        self.pipe, child_end = gipc.pipe()
+        self._socket_connect()
+        self.reader = gipc.start_process(
+            target=ServerReader,
+            args=(child_end, os.getpid(), self.socket.fileno(),
+                  self.tracer.pause_signal),
+        )
+        with Timeout(5, QdbFailedToConnect(self.tracer.address,
+                                           self.tracer.retry_attepts)):
+            self.pipe.get()
         self.send(
             fmt_msg(
                 'start', {
@@ -296,15 +320,14 @@ class RemoteCommandManager(CommandManager):
                 }
             )
         )
-        self.reader.start()
         atexit.register(self.stop)
 
     def stop(self):
         """
         Stops the command manager, freeing its resources.
         """
-        atexit.unregister(self.stop)  # We have already cleaned up.
-        self.reader.terminate()
+        if self.reader:
+            self.reader.terminate()
         self.socket.close()
 
     def format_breakpoint_dict(self, breakpoint):
@@ -350,22 +373,24 @@ class RemoteCommandManager(CommandManager):
         if signum == self.tracer.pause_signal:
             self.tracer.set_step()
 
-    def _get_events(self):
+    def get_events(self):
         """
         Infinitly yield events from the Reader.
         """
         while self.reader.is_alive():
             try:
-                event = self.pipe.recv()
-            except IOError:
-                continue
+                event = self.pipe.get()
+            except IOError as i:
+                if i.errno == errno.EAGAIN:
+                    continue
+                raise
             yield event
 
-    def _get_commands(self):
+    def get_commands(self):
         """
         Yields the commands out of the events.
         """
-        for event in self._get_events():
+        for event in self.get_events():
             if event['e'] == 'error':
                 self.handle_error(event.get('p'))
             else:
@@ -387,9 +412,9 @@ class RemoteCommandManager(CommandManager):
         Processes the next message from the reader.
         """
         try:
-            return next(self._get_commands())()
+            return next(self.get_commands())()
         except StopIteration:
-            raise QdbCommunicationError()
+            raise QdbCommunicationError('No more commands from server')
 
     def command_step(self, payload):
         self.tracer.set_step()
@@ -440,7 +465,9 @@ class RemoteCommandManager(CommandManager):
             return self.next_command()
 
         for w in payload:
-            self.watchlist.pop(w)
+            # Default to None so that clearing values that have not been set
+            # acts as a nop instead of an error.
+            self.tracer.watchlist.pop(w, None)
 
         self.send_watchlist()
 
@@ -520,27 +547,32 @@ class RemoteCommandManager(CommandManager):
         self.tracer.disable(payload)
 
 
-def get_events_from_socket(self, sck):
+def get_events_from_socket(sck):
     """
     Yields valid events from the server socket.
     """
     while True:
         try:
-            cmd_len = self.server_comm.recv(4)
-            if len(cmd_len) != 4:
-                # We did not get a valid length, the stream is corrupt.
+            rlen = sck.recv(4)
+            if len(rlen) != 4:
                 return
-            cmd_len = unpack('>i', cmd_len)[0]
-            pre_unpickle = self.server_comm.recv(cmd_len)
-            cmd = pickle.loads(pre_unpickle)
-        except socket.error as e:
+            rlen = unpack('>i', rlen)[0]
+            bytes_received = 0
+            resp = ''
+            with Timeout(1, False):
+                while bytes_received < rlen:
+                    resp += sck.recv(rlen - bytes_received)
+                    bytes_received = len(resp)
+
+            if bytes_received != rlen:
+                return  # We are not getting bytes anymore.
+
+            cmd = pickle.loads(resp)
+        except (socket.error, pickle.UnpicklingError) as e:
             # We can no longer talk the the server.
+            log.warn('Error reading from socket')
             yield {'e': 'error', 'p': e}
             return
-        except pickle.UnpicklingError as p:
-            msg = fmt_err_msg('pickle', str(p))
-            sck.sendall(pack('>i', len(msg)))
-            sck.sendall(msg)
         else:
             # Yields only valid commands.
             yield cmd
@@ -551,11 +583,11 @@ class ServerReader(object):
     Object that reads from the server asyncronously from the process
     being debugged.
     """
-    def __init__(self, debugger_pipe, session_pid, server_comm,
-                 pause_signal=None):
+    def __init__(self, debugger_pipe, session_pid, server_comm_fd,
+                 pause_signal):
         self.pause_signal = pause_signal or signal.SIGUSR2
         self.debugger_pipe = debugger_pipe
-        self.server_comm = server_comm
+        self.server_comm = socket.fromfd(server_comm_fd, 0, 0)
         self.session_pid = session_pid
         self.socket_error = None
         self.process_messages()
@@ -572,15 +604,19 @@ class ServerReader(object):
         Infinitly reads events off the server, if it is a pause, then it pauses
         the process, otherwise, it passes the message along.
         """
-        for event in get_events_from_socket(self.server_comm):
-            if event['e'] == 'pause':
-                self.command_pause()
-            else:
-                self.debugger_pipe.send(event)
+        self.debugger_pipe.put({'e': 'reader_started'})
+        try:
+            for event in get_events_from_socket(self.server_comm):
+                if event['e'] == 'pause':
+                    self.command_pause()
+                else:
+                    self.debugger_pipe.put(event)
 
-        # If we get here, we had a socket error that dropped us out of
-        # get_events(), signal this to the process.
-        self.debugger_pipe.send({'e': 'disable', 'e': 'soft'})
+                    # If we get here, we had a socket error that dropped us
+                    # out of get_events(), signal this to the process.
+            self.debugger_pipe.put({'e': 'disable', 'e': 'soft'})
+        finally:
+            log.info('ServerReader terminating')
 
 
 class ServerLocalCommandManager(RemoteCommandManager):
@@ -591,10 +627,11 @@ class ServerLocalCommandManager(RemoteCommandManager):
     responsibility. While using a normal RemoteCommandManager will work, this
     incurs less overhead.
     """
-    def _start(self, auth_msg):
+    def start(self, auth_msg):
         """
         Begins processing commands from the server.
         """
+        self._socket_connect()
         self.send(
             fmt_msg(
                 'start', {
@@ -604,7 +641,9 @@ class ServerLocalCommandManager(RemoteCommandManager):
                 }
             )
         )
-        self.reader = None
 
-    def _get_events(self):
+    def stop(self):
+        self.socket.close()
+
+    def get_events(self):
         return get_events_from_socket(self.socket)

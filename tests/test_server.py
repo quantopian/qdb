@@ -39,6 +39,7 @@ def fmt_msg(event, payload):
         'p': payload,
     }
 
+
 def send_tracer_event(sck, event, payload):
     """
     Sends an event over the socket.

@@ -12,13 +12,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License
-import os
 from itertools import count, izip
 from textwrap import dedent
 from unittest import TestCase
 
 from qdb import Qdb
 from qdb.comm import NopCmdManager
+
+from tests import fix_filename
 
 
 class QdbFileCacheTester(TestCase):
@@ -52,9 +53,7 @@ class QdbFileCacheTester(TestCase):
         # The first time this is run after a change, __file__ will point to
         # the source code file; however, if we run this twice in a row, it
         # points to the byte-compiled file.
-        filename = os.path.abspath(
-            __file__[:-1] if __file__.endswith('.pyc') else __file__
-        )
+        filename = fix_filename(__file__)
         db = Qdb(cmd_manager=NopCmdManager)
         db.cache_file(filename)
 

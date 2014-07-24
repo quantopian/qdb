@@ -121,8 +121,9 @@ class Qdb(Bdb, object):
         self.forget()
         super(Qdb, self).__init__()
         if not cmd_manager:
-            cmd_manager = RemoteCommandManager(self, auth_msg)
+            cmd_manager = RemoteCommandManager
         self.cmd_manager = cmd_manager(self, auth_msg)
+        self.cmd_manager.start()
 
     def get_line(self, filename, line):
         """
@@ -410,6 +411,9 @@ class Qdb(Bdb, object):
                 raise ValueError("mode must be 'hard' or 'soft'")
         finally:
             self.cmd_manager.stop()
+
+    def __enter__(self):
+        return self
 
     def __exit__(self, exc):
         if not exc or isinstance(exc, QdbQuit):

@@ -180,6 +180,10 @@ class QdbTracerServer(StreamServer):
                     continue
                 # Send the serialized event back to the browser.
                 self.session_store.send_to_clients(uuid, event=event)
+        except socket.error:
+            log.info('Stream from %s to session %s closed unexpectedly'
+                     % (addr, uuid))
+            return
         finally:
             log.info('Closing stream from %s to session %s' % (addr, uuid))
             # The session_store should close this, but closing it again here

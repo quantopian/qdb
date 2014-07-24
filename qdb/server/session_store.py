@@ -163,12 +163,14 @@ class SessionStore(object):
         """
         Starts the session store service.
         """
+        log.info('Starting qdb.server.session_store')
         self._gc_glet = gevent.spawn(self._run_gc)
 
     def stop(self):
         """
         Stops the session store service that is running.
         """
+        log.info('Stopping qdb.server.session_store')
         self._gc_glet.kill(timeout=5)
         self.slaughter_all()
 

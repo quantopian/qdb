@@ -14,3 +14,15 @@
 # limitations under the License.
 from gevent.monkey import patch_all
 patch_all()  # Patch out the modules before executing the tests.
+
+import os
+
+
+def fix_filename(filename):
+    """
+    Fixes the __file__ attribute to make tests work even after being byte
+    compiled.
+    """
+    return os.path.abspath(
+        filename[:-1] if filename.endswith('.pyc') else filename
+    )

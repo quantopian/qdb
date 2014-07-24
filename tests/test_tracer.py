@@ -12,7 +12,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import os
 import sys
 from unittest import TestCase
 
@@ -22,6 +21,8 @@ from gevent.queue import Queue, Empty
 
 from qdb import Qdb
 from qdb.comm import CommandManager, NopCmdManager
+
+from tests import fix_filename
 
 
 def global_fn():
@@ -40,7 +41,7 @@ class QueueCommandManager(CommandManager):
     A command manager that takes a queue of functions that act on
     the tracer and apply them one at a time with each call to next_command().
     """
-    def __init__(self, tracer, auth_msg):
+    def __init__(self, tracer, auth_msg=''):
         super(QueueCommandManager, self).__init__(tracer, auth_msg)
         self.queue = Queue()
         self.sent = []
@@ -79,6 +80,8 @@ class QueueCommandManager(CommandManager):
 
     stop = clear
 
+    start = lambda _: None
+
 
 class TracerTester(TestCase):
     @classmethod
@@ -86,9 +89,7 @@ class TracerTester(TestCase):
         """
         Saves the filename of this source file.
         """
-        cls.filename = os.path.abspath(
-            __file__[:-1] if __file__.endswith('.pyc') else __file__
-        )
+        cls.filename = fix_filename(__file__)
 
     def tearDown(self):
         # Stop tracing after each test.

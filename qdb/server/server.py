@@ -16,7 +16,6 @@ import gevent.monkey
 gevent.monkey.patch_all()
 
 
-import gevent
 from gevent.event import Event
 from logbook import Logger
 
