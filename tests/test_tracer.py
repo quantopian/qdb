@@ -41,8 +41,8 @@ class QueueCommandManager(CommandManager):
     A command manager that takes a queue of functions that act on
     the tracer and apply them one at a time with each call to next_command().
     """
-    def __init__(self, tracer, auth_msg=''):
-        super(QueueCommandManager, self).__init__(tracer, auth_msg)
+    def __init__(self, tracer):
+        super(QueueCommandManager, self).__init__(tracer)
         self.queue = Queue()
         self.sent = []
 
@@ -80,7 +80,8 @@ class QueueCommandManager(CommandManager):
 
     stop = clear
 
-    start = lambda _: None
+    def start(self, auth_msg=''):
+        pass
 
 
 class TracerTester(TestCase):
@@ -112,7 +113,8 @@ class TracerTester(TestCase):
 
         self.assertTrue(stepped)
 
-        sys.settrace(None)
+        db.disable()
+
         db = Qdb(cmd_manager=QueueCommandManager)
 
         db.cmd_manager.enqueue(lambda t: t.set_step())
@@ -313,6 +315,16 @@ class TracerTester(TestCase):
         self.assertTrue(line_2)
         # We should have still stopped at this breakpoint if we are tracing.
         self.assertFalse(line_3)
+
+        db.disable()
+
+        db = Qdb(cmd_manager=NopCmdManager)
+        line_1 = False
+        with Timeout(0.1, False):
+            db.set_trace(stop=False)
+            line_1 = True
+
+        self.assertTrue(line_1)
 
     def test_watchlist(self):
         """

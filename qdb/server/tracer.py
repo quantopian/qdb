@@ -32,7 +32,7 @@ class AuthenticationFailed(Exception):
     """
     Signals that the authentication failed for some reason.
     """
-    def __init__(self, message):
+    def __init__(self, message='Authentication failed'):
         self.message = message
 
 
@@ -116,7 +116,7 @@ class QdbTracerServer(StreamServer):
                 if not self.tracer_auth_fn(start_event['p'].get('auth', '')):
                     # We failed the authentication check.
                     log.warn('Bad authentication message from (%s, %d)' % addr)
-                    raise AuthenticationFailed('Authentication failed')
+                    raise AuthenticationFailed()
             else:
                 raise AuthenticationFailed(
                     "First event must be of type: 'start'"
@@ -129,18 +129,10 @@ class QdbTracerServer(StreamServer):
         """
         Handles new connections from the tracers.
         """
-        auth_failed_dict = {
-            'e': 'error',
-            'p': {
-                'type': 'auth',
-                'data': '',
-                }
-        }
-
         uuid = None
         local_pid, pause_signal = 0, 0
         message = ''
-
+        log.info('New tracer request from (%s, %d)' % addr)
         try:
             start_event = None
             with Timeout(self.auth_timeout, False):
@@ -151,8 +143,8 @@ class QdbTracerServer(StreamServer):
                 message = 'No start event received'
             else:
                 try:
-                    uuid, local = self.validate_start_event(start_event, addr)
-                    local_pid, pause_signal = local
+                    uuid, (local_pid, pause_signal) \
+                        = self.validate_start_event(start_event, addr)
                 except AuthenticationFailed as a:
                     message = a.message
 
@@ -160,13 +152,23 @@ class QdbTracerServer(StreamServer):
                 # If we have an error, we need to report that back to the
                 # trace so that it may raise a QdbAuthenticationError in the
                 # user's code.
+                auth_failed_dict = {
+                    'e': 'error',
+                    'p': {
+                        'type': 'auth',
+                        'data': '',
+                    }
+                }
+
                 auth_failed_dict['p']['data'] = message
                 err_msg = pickle.dumps(auth_failed_dict)
                 conn.sendall(pack('>i', len(err_msg)))
                 conn.sendall(err_msg)
+                log.warn('Invalid start message from (%s, %d)' % addr)
                 return
 
-            log.info('Assigning stream from %s to session %s' % (addr, uuid))
+            log.info('Assigning stream from (%s, %d) to session %s'
+                     % (addr[0], addr[1], uuid))
 
             if not self.session_store.attach_tracer(uuid, conn):
                 return  # No browser so the attach failed.

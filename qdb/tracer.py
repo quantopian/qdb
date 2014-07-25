@@ -72,7 +72,7 @@ class Qdb(Bdb, object):
                  pause_signal=None,
                  redirect_stdout=True,
                  retry_attepts=10,
-                 uuid_fn=None,
+                 uuid=None,
                  cmd_manager=None):
         """
         Host and port define the address to connect to.
@@ -93,15 +93,16 @@ class Qdb(Bdb, object):
         The repr_fn is a function to use to convert objects to strings to send
         then back to the server. By default, this wraps repr by catching
         exceptions and reporting them to the user.
-        The uuid_fn is a function that will be used to generate unique session
-        identifiers, this defaults to uuid4.
+        The uuid is the identifier on the server for this session. If none is
+        provided, it will generate a uuid4.
         cmd_manager should be a callable that takes a Qdb instance and manages
         commands by implementing a next_command method. If none, a new, default
         manager will be created that reads commands from the server at
         (host, port).
         """
+        super(Qdb, self).__init__()
         self.address = host, port
-        self.default_file = default_file
+        self.set_default_file(default_file)
         self.exception_serializer = exception_serializer or \
             default_exception_serializer
         self.eval_fn = eval_fn or default_eval_fn
@@ -110,7 +111,7 @@ class Qdb(Bdb, object):
         self.retry_attepts = retry_attepts
         self.skip_fn = skip_fn or (lambda _: False)
         self.pause_signal = pause_signal if pause_signal else signal.SIGUSR2
-        self.uuid = str((uuid_fn if uuid_fn else uuid4)())
+        self.uuid = str(uuid or uuid4())
         self.watchlist = {}
         # We need to be able to send stdout back to the user debugging the
         # program. We hold a handle to this in case the program resets stdout.
@@ -119,11 +120,16 @@ class Qdb(Bdb, object):
             self.stdout_ptr = self.stdout.tell()
             sys.stdout = self.stdout
         self.forget()
-        super(Qdb, self).__init__()
         if not cmd_manager:
             cmd_manager = RemoteCommandManager
-        self.cmd_manager = cmd_manager(self, auth_msg)
-        self.cmd_manager.start()
+        self.cmd_manager = cmd_manager(self)
+        self.cmd_manager.start(auth_msg)
+
+    def set_default_file(self, filename):
+        """
+        Safely sets the new default file.
+        """
+        self.default_file = self.canonic(filename) if filename else None
 
     def get_line(self, filename, line):
         """
@@ -346,7 +352,8 @@ class Qdb(Bdb, object):
             raise QdbQuit()  # Rewrap as a QdbError object.
 
     def user_call(self, stackframe, arg):
-        self.user_line(stackframe)
+        if self.break_here(stackframe):
+            self.user_line(stackframe)
 
     def user_line(self, stackframe):
         self.setup_stack(stackframe, None)
@@ -394,17 +401,17 @@ class Qdb(Bdb, object):
         # Restore stdout to the true stdout.
         sys.stdout = sys.__stdout__
 
-    def disable(self, mode):
+    def disable(self, mode='soft'):
         """
         Stops tracing.
         """
-        # Remove this instance so that new ones may be created.
-        self.__class__._instance = None
         try:
             if mode == 'soft':
                 self.clear_all_breaks()
                 self.set_continue()
                 sys.stdout = sys.__stdout__
+                # Remove this instance so that new ones may be created.
+                self.__class__._instance = None
             elif mode == 'hard':
                 sys.exit(1)
             else:

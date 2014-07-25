@@ -24,9 +24,6 @@ import os
 
 from websocket import create_connection
 
-DEFAULT_WS_ADDRESS = 'ws://localhost:8002/{uuid}'
-DEFAULT_UUID = 'qdb'
-
 # The directory to store the output files.
 TMP_DIR = '/tmp/qdb/'
 # The format of the outfile
@@ -37,9 +34,9 @@ _version = '0.1.0'
 
 class QdbRepl(Cmd, object):
     def __init__(self,
-                 wsaddress=None,
-                 auth_msg=None,
-                 uuid=None,
+                 wsaddress='ws://localhost:8002/{uuid}',
+                 auth_msg='',
+                 uuid='qdb',
                  prompt='(qdb) '):
         self.auth_msg = auth_msg
         self.printer = None
@@ -54,7 +51,10 @@ class QdbRepl(Cmd, object):
         """
         Connects to the server and sends start.
         """
-        self._ws = create_connection(self.wsaddress.format(uuid=self.uuid))
+        final_addr = self.wsaddress.format(uuid=self.uuid)
+        print('Connecting to "%s" with auth_msg "%s"'
+              % (final_addr, self.auth_msg))
+        self._ws = create_connection(final_addr)
         self.send_command('start', self.auth_msg)
         self.filename = FILE_FORMAT % self.uuid
         self.printer = Process(
@@ -89,14 +89,8 @@ class QdbRepl(Cmd, object):
 
     def preloop(self):
         """
-        Prompts for any missing fields.
+        Connects to the server before interacting.
         """
-        if not self.wsaddress:
-            self.wsaddress = DEFAULT_WS_ADDRESS
-        if not self.uuid:
-            self.uuid = DEFAULT_UUID
-        if not self.auth_msg:
-            self.auth_msg = ''
         self._connect()
 
     def postcmd(self, stop, line):
@@ -262,10 +256,15 @@ class ServerPrinter(object):
         self.writeln(']')
 
     def event_breakpoints(self, payload):
-        """
-        Ignore these.
-        """
-        pass
+        self.writeln('breakpoints: [')
+        for breakpoint in payload:
+            self.writeln('  > %s %d %s %s %s'
+                         % (breakpoint['file'],
+                            breakpoint['line'],
+                            breakpoint['temp'],
+                            breakpoint['cond'],
+                            breakpoint['func']))
+        self.writeln(']')
 
     def event_error(self, payload):
         self.writeln('*** error: %s: %s' % (payload['type'], payload['data']))
@@ -273,7 +272,7 @@ class ServerPrinter(object):
     def event_return(self, payload):
         self.writeln('--> returning with %s' % payload)
 
-    def event_disabled(self, payload):
+    def event_disable(self, payload):
         self.writeln('Disabled, goodbye.')
 
 if __name__ == '__main__':

@@ -39,13 +39,15 @@ def set_trace(host='localhost',
               pause_signal=None,
               redirect_stdout=True,
               retry_attepts=10,
-              uuid_fn=None,
+              uuid=None,
               auth_fn=None,
               cmd_manager=None):
     """
     Begins tracing from this point.
     All arguments except for stackframe are passed to the constructor of the
     internal Qdb object.
+    This function will continue to act on the same Qdb object until disable()
+    is called.
     """
     Qdb(
         host=host,
@@ -55,8 +57,18 @@ def set_trace(host='localhost',
         pause_signal=pause_signal,
         redirect_stdout=redirect_stdout,
         retry_attepts=retry_attepts,
-        uuid_fn=uuid_fn,
+        uuid=uuid,
         auth_fn=auth_fn,
         cmd_manager=cmd_manager,
     ).set_trace(sys._getframe().f_back)
     # We use f_back so that we start in the caller of this function.
+
+
+def disable(mode='soft'):
+    """
+    Disables the internal Qdb object. If mode == 'soft', It will stop the
+    command manager (releasing its resources) and continue execution without
+    tracing. If mode == 'hard', it will raise a QdbQuit exception.
+    Any other value for mode will raise a ValueError.
+    """
+    Qdb().disable(mode)

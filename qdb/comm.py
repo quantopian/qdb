@@ -58,28 +58,28 @@ def capture_output():
         sys.stdout = sys.__stdout__
 
 
-def fmt_msg(event, payload=None):
+def fmt_msg(event, payload=None, to_pickle=True):
     """
     Packs a message to be sent to the server.
     """
-    if payload is None:
-        return pickle.dumps({
-            'e': event,
-        })
-    return pickle.dumps({
+    frame = {
         'e': event,
-        'p': payload
-    })
+        'p': payload,
+    }
+    return pickle.dumps(frame) if to_pickle else frame
 
 
-def fmt_err_msg(error_type, data):
+def fmt_err_msg(error_type, data, to_pickle=True):
     """
     Constructs an error message.
     """
-    return fmt_msg('error', {
-        'type': error_type,
-        'data': data,
-    })
+    return fmt_msg(
+        'error', {
+            'type': error_type,
+            'data': data,
+        },
+        to_pickle=pickle
+    )
 
 
 def fmt_breakpoint(breakpoint):
@@ -101,8 +101,7 @@ class CommandManager(object):
     """
     __metaclass__ = ABCMeta
 
-    def __init__(self, tracer, auth_msg=''):
-        self.auth_msg = auth_msg
+    def __init__(self, tracer):
         self.tracer = tracer
 
     def _fmt_stackframe(self, stackframe, line):
@@ -217,7 +216,7 @@ class CommandManager(object):
         raise NotImplementedError
 
     @abstractmethod
-    def start(self):
+    def start(self, auth_msg=''):
         """
         Start acquiring new commands.
         """
@@ -243,7 +242,7 @@ class NopCmdManager(CommandManager):
     def send(self, msg):
         pass
 
-    def start(self):
+    def start(self, msg):
         pass
 
     def stop(self):
@@ -255,8 +254,8 @@ class RemoteCommandManager(CommandManager):
     Manager that processes commands from the server.
     This is the default Qdb command manager.
     """
-    def __init__(self, tracer, auth_msg=''):
-        super(RemoteCommandManager, self).__init__(tracer, auth_msg)
+    def __init__(self, tracer):
+        super(RemoteCommandManager, self).__init__(tracer)
 
         # Construct a pipe to talk to the reader.
         self.pipe = None
@@ -297,7 +296,7 @@ class RemoteCommandManager(CommandManager):
                  % (self.tracer.uuid, self.tracer.address[0],
                     self.tracer.address[1]))
 
-    def start(self, auth_msg):
+    def start(self, auth_msg=''):
         """
         Begins processing commands from the server.
         """
@@ -571,7 +570,7 @@ def get_events_from_socket(sck):
         except (socket.error, pickle.UnpicklingError) as e:
             # We can no longer talk the the server.
             log.warn('Error reading from socket')
-            yield {'e': 'error', 'p': e}
+            yield fmt_err_msg('socket', e)
             return
         else:
             # Yields only valid commands.
@@ -604,7 +603,7 @@ class ServerReader(object):
         Infinitly reads events off the server, if it is a pause, then it pauses
         the process, otherwise, it passes the message along.
         """
-        self.debugger_pipe.put({'e': 'reader_started'})
+        self.debugger_pipe.put(fmt_msg('reader_started', to_pickle=False))
         try:
             for event in get_events_from_socket(self.server_comm):
                 if event['e'] == 'pause':
@@ -614,7 +613,7 @@ class ServerReader(object):
 
                     # If we get here, we had a socket error that dropped us
                     # out of get_events(), signal this to the process.
-            self.debugger_pipe.put({'e': 'disable', 'e': 'soft'})
+            self.debugger_pipe.put(fmt_msg('disable', 'soft', to_pickle=False))
         finally:
             log.info('ServerReader terminating')
 
@@ -627,7 +626,7 @@ class ServerLocalCommandManager(RemoteCommandManager):
     responsibility. While using a normal RemoteCommandManager will work, this
     incurs less overhead.
     """
-    def start(self, auth_msg):
+    def start(self, auth_msg=''):
         """
         Begins processing commands from the server.
         """

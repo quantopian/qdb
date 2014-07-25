@@ -21,7 +21,7 @@ class QdbError(Exception):
     Base Qdb error class.
     """
     def __str__(self):
-        return 'QdbError'
+        return 'error in qdb'
 
     def __repr__(self):
         return 'QdbError()'
