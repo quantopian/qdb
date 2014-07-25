@@ -96,6 +96,24 @@ class TracerTester(TestCase):
         # Stop tracing after each test.
         sys.settrace(None)
 
+    def test_as_ctx_mgr(self):
+        """
+        Tests the debugger as a context manager.
+        """
+        line_1 = False
+        with Qdb(cmd_manager=NopCmdManager) as db:
+            line_1 = True
+            self.assertTrue(line_1)
+            self.assertIs(Qdb._instance, db)
+            self.assertEqual(
+                db.get_line(
+                    self.filename,
+                    db.curframe.f_lineno),
+                '                    db.curframe.f_lineno),'
+            )
+
+        self.assertIs(Qdb._instance, None)
+
     def test_set_step(self):
         """
         Tests the functionality of set_step by asserting that it only executes

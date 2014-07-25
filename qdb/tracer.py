@@ -420,10 +420,11 @@ class Qdb(Bdb, object):
             self.cmd_manager.stop()
 
     def __enter__(self):
+        self.set_trace(sys._getframe().f_back)
         return self
 
-    def __exit__(self, exc):
-        if not exc or isinstance(exc, QdbQuit):
+    def __exit__(self, type, value, traceback):
+        if isinstance(value, QdbQuit) or value is None:
             self.disable('soft')
 
     def set_trace(self, stackframe=None, stop=True):
