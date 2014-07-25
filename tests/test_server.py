@@ -21,6 +21,7 @@ from nose_parameterized import parameterized
 from struct import pack, unpack
 from websocket import create_connection
 
+from qdb.comm import fmt_msg, get_events_from_socket
 from qdb.server import (
     QdbServer,
     QdbNopServer,
@@ -33,18 +34,11 @@ except ImportError:
     import pickle
 
 
-def fmt_msg(event, payload):
-    return {
-        'e': event,
-        'p': payload,
-    }
-
-
 def send_tracer_event(sck, event, payload):
     """
     Sends an event over the socket.
     """
-    msg = pickle.dumps(fmt_msg(event, payload))
+    msg = fmt_msg(event, payload)
     sck.sendall(pack('>i', len(msg)))
     sck.sendall(msg)
 
@@ -53,27 +47,17 @@ def send_client_event(ws, event, payload):
     """
     Sends an event to the client.
     """
-    ws.send(json.dumps(fmt_msg(event, payload)))
+    ws.send(json.dumps(fmt_msg(event, payload, to_pickle=False)))
 
 
 def recv_tracer_event(sck):
     """
     Reads an event off the socket.
     """
-    length = sck.recv(4)
-    if len(length) != 4:
-        return None
-    rlen = unpack('>i', length)[0]
-    bytes_received = 0
-    resp = ''
-    with Timeout(1, False):
-        while bytes_received < rlen:
-            resp += sck.recv(rlen - bytes_received)
-            bytes_received = len(resp)
-
-    if bytes_received != rlen:
-        return None
-    return pickle.loads(resp)
+    try:
+        return next(get_events_from_socket(sck))
+    except StopIteration:
+        return {}
 
 
 def recv_client_event(ws):
@@ -118,14 +102,14 @@ class ServerTester(TestCase):
         )
         server.start()
 
-        auth_failed_dict = fmt_msg('error', {
-            'type': 'auth',
-            'data': 'Authentication failed'
-        })
-        disable_dict = {'e': 'disable'}
-
-        auth_failed_msg = ''
-        disable_msg = ''
+        auth_failed_dict = fmt_msg(
+            'error', {
+                'type': 'auth',
+                'data': 'Authentication failed'
+            },
+            to_pickle=False
+        )
+        disable_dict = fmt_msg('disable', to_pickle=True)
 
         try:
             ws = create_connection(
@@ -133,14 +117,16 @@ class ServerTester(TestCase):
             )
             send_client_event(ws, 'start', 'friendzoned-again')
 
+            auth_failed_event = disable_event = None
+
             with Timeout(2, False):
                 # The server should time us out in 1 second and send back these
                 # two messages.
-                auth_failed_msg = ws.recv()
-                disable_msg = ws.recv()
+                auth_failed_event = recv_client_event(ws)
+                disable_event = recv_client_event(ws)
 
-            self.assertEquals(auth_failed_msg, json.dumps(auth_failed_dict))
-            self.assertEquals(disable_msg, json.dumps(disable_dict))
+            self.assertEquals(auth_failed_event, auth_failed_dict)
+            self.assertEquals(disable_event['e'], 'disable')
             self.assertFalse('test' in server.session_store)
         finally:
             server.stop()
@@ -157,10 +143,13 @@ class ServerTester(TestCase):
             'ws://localhost:8004' + DEFAULT_ROUTE_FMT.format(uuid='test')
         )
 
-        auth_failed_dict = fmt_msg('error', {
-            'type': 'auth',
-            'data': 'No start event received'
-        })
+        auth_failed_dict = fmt_msg(
+            'error', {
+                'type': 'auth',
+                'data': 'No start event received'
+            },
+            to_pickle=False
+        )
         disable_dict = {'e': 'disable'}
 
         auth_failed_msg = ''
@@ -277,7 +266,7 @@ class ServerTester(TestCase):
                              recv_tracer_event(tracer))
             self.assertEqual({'e': 'disable', 'p': mode},
                              recv_tracer_event(tracer))
-            self.assertEqual({'e': 'disable'}, recv_client_event(client))
+            self.assertEqual('disable', recv_client_event(client)['e'])
             self.assertFalse('test' in server.session_store)
         finally:
             server.stop()

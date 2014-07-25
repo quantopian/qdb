@@ -32,6 +32,8 @@ try:
 except ImportError:
     import pickle
 
+from qdb.comm import fmt_msg
+
 # The number of minutes that a session can go without sending a message before
 # it is cleaned by the gc.
 SESSION_INACTIVITY_TIMEOUT = 10  # minutes
@@ -292,7 +294,7 @@ class SessionStore(object):
         if not session:
             return  # Slaughtering a session that does not exits.
         # Close all the clients.
-        disable_event = {'e': 'disable'}
+        disable_event = fmt_msg('disable', to_pickle=False)
         self.send_to_clients(uuid, event=disable_event)
         for client in session.clients:
             try:

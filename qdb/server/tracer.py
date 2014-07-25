@@ -25,6 +25,8 @@ try:
 except ImportError:
     import pickle
 
+from qdb.comm import get_events_from_socket
+
 log = Logger('QdbTracerServer')
 
 
@@ -63,41 +65,12 @@ class QdbTracerServer(StreamServer):
         log.info('Stopping qdb.server.tracer')
         super(QdbTracerServer, self).stop()
 
-    def read_events(self, conn):
-        """
-        Generator that yields the events off the socket while we are running
-        and the client is alive.
-        """
-        while True:
-            try:
-                rlen = conn.recv(4)
-                if len(rlen) != 4:
-                    # We did not get a valid length, the stream is corrupt.
-                    return
-                rlen = unpack('>i', rlen)[0]
-                bytes_received = 0
-                resp = ''
-                with Timeout(1, False):
-                    while bytes_received < rlen:
-                        resp += conn.recv(rlen - bytes_received)
-                        bytes_received = len(resp)
-
-                if bytes_received != rlen:
-                    return  # We are not getting bytes anymore.
-
-                resp = pickle.loads(resp)
-                resp['e']
-            except (socket.error, pickle.UnpicklingError, KeyError):
-                return  # It appears something died, kill this now.
-
-            yield resp
-
     def read_event(self, conn):
         """
         Reads a single message.
         """
         try:
-            return next(self.read_events(conn))
+            return next(get_events_from_socket(conn))
         except StopIteration:
             return {}
 
@@ -173,7 +146,8 @@ class QdbTracerServer(StreamServer):
             if not self.session_store.attach_tracer(uuid, conn):
                 return  # No browser so the attach failed.
 
-            for event in self.read_events(conn):
+            for event in get_events_from_socket(conn):
+                log.error(event)
                 # If the tracer is running local to the server, we can avoid
                 # starting a reader process to raise the pause signal in the
                 # tracer, This event should not get passed along.

@@ -2,8 +2,6 @@
 gevent==1.0.1
 gevent-websocket==0.9.3
 greenlet==0.4.2
-# This is a fork of gipc-0.4.0 that doesn't crash on OSX.
-# See: https://bitbucket.org/jgehrcke/gipc/issue/13/invalid-argument-crashes-on-pipe-reads-mac
-https://bitbucket.org/jdricklefs/gipc/get/b682ef2c6fa1.zip#egg=gipc-dev
+gipc==0.4.0
 
 Logbook==0.7.0

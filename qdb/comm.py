@@ -78,7 +78,7 @@ def fmt_err_msg(error_type, data, to_pickle=True):
             'type': error_type,
             'data': data,
         },
-        to_pickle=pickle
+        to_pickle=to_pickle
     )
 
 
@@ -567,10 +567,15 @@ def get_events_from_socket(sck):
                 return  # We are not getting bytes anymore.
 
             cmd = pickle.loads(resp)
+            cmd['e']
         except (socket.error, pickle.UnpicklingError) as e:
             # We can no longer talk the the server.
             log.warn('Error reading from socket')
-            yield fmt_err_msg('socket', e)
+            yield fmt_err_msg('socket', str(e), to_pickle=False)
+            return
+        except KeyError:
+            log.warn('Client sent invalid cmd.')
+            yield fmt_err_msg('command', "No 'e' field sent", to_pickle=False)
             return
         else:
             # Yields only valid commands.

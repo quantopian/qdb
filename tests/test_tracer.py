@@ -183,7 +183,7 @@ class TracerTester(TestCase):
             '            db.get_line(self.filename, db.curframe.f_lineno),'
         )
 
-        sys.settrace(None)
+        db.disable()
         db = Qdb(cmd_manager=QueueCommandManager)
 
         f_called[0] = False
@@ -202,7 +202,7 @@ class TracerTester(TestCase):
         # Since we only stepped once, this is the last time we set the frame.
         self.assertEqual(
             db.get_line(self.filename, db.curframe.f_lineno),
-            '        def f():'
+            '            f_called[0] = True'
         )
 
     def test_set_continue_no_breaks(self):
