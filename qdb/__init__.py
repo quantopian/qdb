@@ -34,14 +34,17 @@ _version = '0.1.0'
 
 def set_trace(host='localhost',
               port=8001,
+              auth_msg='',
+              default_file=None,
               eval_fn=None,
+              exception_serializer=None,
               skip_fn=None,
               pause_signal=None,
               redirect_stdout=True,
               retry_attepts=10,
               uuid=None,
-              auth_fn=None,
-              cmd_manager=None):
+              cmd_manager=None,
+              stop=True):
     """
     Begins tracing from this point.
     All arguments except for stackframe are passed to the constructor of the
@@ -53,14 +56,14 @@ def set_trace(host='localhost',
         host=host,
         port=port,
         eval_fn=eval_fn,
+        exception_serializer=exception_serializer,
         skip_fn=skip_fn,
         pause_signal=pause_signal,
         redirect_stdout=redirect_stdout,
         retry_attepts=retry_attepts,
         uuid=uuid,
-        auth_fn=auth_fn,
         cmd_manager=cmd_manager,
-    ).set_trace(sys._getframe().f_back)
+    ).set_trace(sys._getframe().f_back, stop=stop)
     # We use f_back so that we start in the caller of this function.
 
 

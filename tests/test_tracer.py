@@ -12,6 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from functools import partial
 import sys
 from unittest import TestCase
 
@@ -20,15 +21,14 @@ from gevent import Timeout
 from gevent.queue import Queue, Empty
 
 from qdb import Qdb
-from qdb.comm import CommandManager, NopCmdManager
+from qdb.comm import CommandManager, NopCommandManager
 
 from tests import fix_filename
 
 
 def global_fn():
     """
-    A test global function that is stateful, this is used to assert that
-    calling it twice has side effects.
+    A test global function.
     """
     return 'global_fn'
 
@@ -84,6 +84,22 @@ class QueueCommandManager(CommandManager):
         pass
 
 
+class StatefulNopCommandManager(NopCommandManager):
+    """
+    A NopCommandManager that stores its running state
+    """
+    def __init__(self, tracer, state):
+        super(StatefulNopCommandManager, self).__init__(tracer)
+        self.running_state = state
+        self.running_state[0] = False
+
+    def start(self, auth_msg=''):
+        self.running_state[0] = True
+
+    def stop(self):
+        self.running_state[0] = False
+
+
 class TracerTester(TestCase):
     @classmethod
     def setUpClass(cls):
@@ -100,8 +116,14 @@ class TracerTester(TestCase):
         """
         Tests the debugger as a context manager.
         """
+        running_state = [None]
+        cmd_manager_callable = partial(
+            StatefulNopCommandManager,
+            state=running_state
+        )
         line_1 = False
-        with Qdb(cmd_manager=NopCmdManager) as db:
+        with Qdb(cmd_manager=cmd_manager_callable) as db:
+            self.assertTrue(running_state[0])
             line_1 = True
             self.assertTrue(line_1)
             self.assertIs(Qdb._instance, db)
@@ -112,7 +134,10 @@ class TracerTester(TestCase):
                 '                    db.curframe.f_lineno),'
             )
 
+        # Assert the __exit__ clears the singleton so a new one can be used.
         self.assertIs(Qdb._instance, None)
+        # Assert that __exit__ stopped the command manager.
+        self.assertFalse(running_state[0])
 
     def test_set_step(self):
         """
@@ -336,7 +361,7 @@ class TracerTester(TestCase):
 
         db.disable()
 
-        db = Qdb(cmd_manager=NopCmdManager)
+        db = Qdb(cmd_manager=NopCommandManager)
         line_1 = False
         with Timeout(0.1, False):
             db.set_trace(stop=False)
@@ -349,7 +374,7 @@ class TracerTester(TestCase):
         Tests the watchlist by evaluating a constant, local function, local
         variable, global function, and global variable.
         """
-        db = Qdb(cmd_manager=NopCmdManager)
+        db = Qdb(cmd_manager=NopCommandManager)
         db.extend_watchlist(
             '2 + 2',
             'local_var',

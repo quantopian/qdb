@@ -17,7 +17,7 @@ from unittest import TestCase
 
 from nose_parameterized import parameterized
 
-from qdb.debugger import (
+from qdb.tracer import (
     default_eval_fn,
     default_exception_serializer,
 )

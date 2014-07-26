@@ -18,7 +18,7 @@ from unittest import TestCase
 from gevent import Timeout, spawn_later
 from gevent import socket
 from nose_parameterized import parameterized
-from struct import pack, unpack
+from struct import pack
 from websocket import create_connection
 
 from qdb.comm import fmt_msg, get_events_from_socket
@@ -27,11 +27,6 @@ from qdb.server import (
     QdbNopServer,
 )
 from qdb.server.server import DEFAULT_ROUTE_FMT
-
-try:
-    import cPickle as pickle
-except ImportError:
-    import pickle
 
 
 def send_tracer_event(sck, event, payload):
@@ -109,7 +104,6 @@ class ServerTester(TestCase):
             },
             to_pickle=False
         )
-        disable_dict = fmt_msg('disable', to_pickle=True)
 
         try:
             ws = create_connection(

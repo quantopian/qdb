@@ -14,7 +14,7 @@
 # limitations under the License.
 import os
 import socket
-from struct import pack, unpack
+from struct import pack
 
 from gevent import Timeout
 from gevent.server import StreamServer

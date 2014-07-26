@@ -231,7 +231,7 @@ class CommandManager(object):
         raise NotImplementedError
 
 
-class NopCmdManager(CommandManager):
+class NopCommandManager(CommandManager):
     """
     Nop command manager that never alters the state of the debugger.
     This is useful if you want to manage the debugger in an alternate way.
