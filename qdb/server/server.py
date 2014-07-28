@@ -43,7 +43,7 @@ class QdbServer(object):
                  tracer_port=8001,
                  client_host='localhost',
                  client_port=8002,
-                 route=DEFAULT_ROUTE,
+                 route=None,
                  auth_timeout=60,  # seconds
                  inactivity_timeout=10,  # minutes
                  attach_timeout=60,  # seconds
@@ -74,7 +74,7 @@ class QdbServer(object):
             session_store=self.session_store,
             host=client_host,
             port=client_port,
-            route=route,
+            route=route or DEFAULT_ROUTE,
             auth_timeout=auth_timeout,
             client_auth_fn=client_auth_fn,
         )

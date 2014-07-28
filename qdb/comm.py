@@ -17,7 +17,6 @@ import atexit
 from bdb import Breakpoint
 from contextlib import contextmanager
 import errno
-import json
 import os
 import signal
 from StringIO import StringIO
@@ -60,20 +59,14 @@ def capture_output():
 def fmt_msg(event, payload=None, serial=None):
     """
     Packs a message to be sent to the server.
+    Serial is a function to call on the frame to serialize it, e.g:
+    json.dumps or pickle.dumps
     """
-    if serial and serial not in ['pickle', 'json']:
-        raise ValueError("'serial' must be 'pickle', 'json', or falsey'")
-
     frame = {
         'e': event,
         'p': payload,
     }
-    if serial == 'pickle':
-        return pickle.dumps(frame)
-    elif serial == 'json':
-        return json.dumps(frame)
-    else:
-        return frame
+    return serial(frame) if serial else frame
 
 
 def fmt_err_msg(error_type, data, serial=None):
@@ -154,7 +147,7 @@ class CommandManager(object):
                 'input': input,
                 'output': output
             },
-            serial='pickle')
+            serial=pickle.dumps)
         )
 
     def send_stack(self):
@@ -189,13 +182,13 @@ class CommandManager(object):
         """
         Sends a formatted error message.
         """
-        self.send(fmt_err_msg(error_type, error_data, serial='pickle'))
+        self.send(fmt_err_msg(error_type, error_data, serial=pickle.dumps))
 
     def send_event(self, event, payload=None):
         """
         Sends a formatted event.
         """
-        self.send(fmt_msg(event, payload, serial='pickle'))
+        self.send(fmt_msg(event, payload, serial=pickle.dumps))
 
     def next_command(self, msg=None):
         """
@@ -325,7 +318,7 @@ class RemoteCommandManager(CommandManager):
                     'auth': auth_msg,
                     'local': (0, 0),
                 },
-                serial='pickle',
+                serial=pickle.dumps,
             )
         )
         atexit.register(self.stop)
@@ -485,13 +478,17 @@ class RemoteCommandManager(CommandManager):
         try:
             breakpoint = self.format_breakpoint_dict(payload)
         except QdbBreakpointReadError as b:
-            err_msg = fmt_err_msg('set_break', str(b), serial='pickle')
+            err_msg = fmt_err_msg('set_break', str(b), serial=pickle.dumps)
             return self.next_command(err_msg)
 
         try:
             self.tracer.set_break(**breakpoint)
         except QdbUnreachableBreakpoint as u:
-            err_msg = fmt_err_msg('set_breakpoint', str(u), serial='pickle')
+            err_msg = fmt_err_msg(
+                'set_breakpoint',
+                str(u),
+                serial=pickle.dumps
+            )
             return self.next_command(err_msg)
 
         self.next_command()
@@ -502,7 +499,7 @@ class RemoteCommandManager(CommandManager):
         try:
             breakpoint = self.format_breakpoint_dict(payload)
         except QdbBreakpointReadError as b:
-            err_msg = fmt_err_msg('clear_break', str(b), serial='pickle')
+            err_msg = fmt_err_msg('clear_break', str(b), serial=pickle.dumps)
             return self.next_command(err_msg)
 
         self.tracer.clear_break(**breakpoint)
@@ -512,30 +509,30 @@ class RemoteCommandManager(CommandManager):
         if not self.payload_check(payload, 'list'):
             return self.next_command()
 
-        if 'file' not in payload:
-            err_msg = fmt_err_msg('payload', 'list: expected field \'file\'',
-                                  serial='pickle')
-            return self.next_command(err_msg)
+        filename = payload.get('file') or self.tracer.default_file
         try:
-            if self.tracer.skip_fn(payload['file']):
+            if self.tracer.skip_fn(filename):
                 raise KeyError  # Handled the same, avoids duplication.
             if not (payload.get('start') or payload.get('end')):
-                msg = fmt_msg('list', self.tracer.get_file(payload['file']),
-                              serial='pickle')
+                msg = fmt_msg(
+                    'list',
+                    self.tracer.get_file(payload['file']),
+                    serial=pickle.dumps
+                )
             else:
                 # Send back the slice of the file that they requested.
                 msg = fmt_msg(
                     'list',
-                    self.tracer.file_cache[payload['file']][
+                    self.tracer.file_cache[filename][
                         payload.get('start'):payload.get('end')
                     ],
-                    serial='pickle'
+                    serial=pickle.dumps
                 )
         except KeyError:  # The file failed to be cached.
             err_msg = fmt_err_msg(
                 'list',
                 'File %s does not exist' % payload['file'],
-                serial='pickle'
+                serial=pickle.dumps
             )
             return self.next_command(err_msg)
 
@@ -554,7 +551,7 @@ class RemoteCommandManager(CommandManager):
             err_msg = fmt_err_msg(
                 'disable',
                 "payload must be either 'soft' or 'hard'",
-                serial='pickle'
+                serial=pickle.dumps
             )
             return self.next_command(err_msg)
         self.tracer.disable(payload)
@@ -589,7 +586,7 @@ def get_events_from_socket(sck):
             return
         except KeyError:
             log.warn('Client sent invalid cmd.')
-            yield fmt_err_msg('command', "No 'e' field sent")
+            yield fmt_err_msg('event', "No 'e' field sent")
             return
         else:
             # Yields only valid commands.
@@ -657,7 +654,7 @@ class ServerLocalCommandManager(RemoteCommandManager):
                     'auth': auth_msg,
                     'local': (os.getpid(), self.tracer.pause_signal),
                 },
-                serial='pickle',
+                serial=pickle.dumps,
             )
         )
 

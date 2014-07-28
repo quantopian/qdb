@@ -74,7 +74,7 @@ class QdbClientServer(object):
         Sends an error event back to the client.
         """
         try:
-            ws.send(fmt_err_msg(error_type, error_data, serial='json'))
+            ws.send(fmt_err_msg(error_type, error_data, serial=json.dumps))
         except WebSocketError:
             return
 
@@ -144,7 +144,7 @@ class QdbClientServer(object):
             if failed:
                 try:
                     self.send_error(ws, 'auth', message)
-                    ws.send(fmt_msg('disable', serial='json'))
+                    ws.send(fmt_msg('disable', serial=json.dumps))
                 except WebSocketError:
                     # We are unable to send the disable message for some
                     # reason; however, they already failed auth so suppress

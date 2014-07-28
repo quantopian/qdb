@@ -17,6 +17,7 @@ patch_all()
 
 from collections import namedtuple
 import errno
+import json
 from struct import pack
 from time import time
 
@@ -212,7 +213,7 @@ class SessionStore(object):
             # Signal to the tracer that no client attached.
             self._send_to_socket(socket, fmt_err_msg(
                 'client', 'No client',
-                serial='pickle'
+                serial=pickle.dumps
             ))
             self.slaughter(uuid, self.timeout_disable_mode)
             log.warn('No client came to debug %s' % uuid)
@@ -242,7 +243,7 @@ class SessionStore(object):
             return True
         if not self._sessions[uuid].both_sides_event.wait(self.attach_timeout):
             # Signal to the client that no tracer attached.
-            ws.send(fmt_err_msg('tracer', 'No tracer', serial='json'))
+            ws.send(fmt_err_msg('tracer', 'No tracer', serial=json.dumps))
             self.slaughter(uuid)
             log.warn('No tracer attached for %s' % uuid)
             return False
@@ -263,7 +264,7 @@ class SessionStore(object):
 
     def send_to_tracer(self, uuid, msg=None, event=None):
         """
-        Sends a pre-packed message or event the tracer uuid.
+        Sends a pre-packed message or unpacked event the tracer uuid.
         """
         if uuid not in self._sessions:
             log.warn('send_to_tracer failed: session %s does not exist'
@@ -272,15 +273,11 @@ class SessionStore(object):
 
         if event:
             try:
-                msg = fmt_msg(event['e'], event.get('p'), serial='pickle')
-            except KeyError as k:
+                msg = fmt_msg(event['e'], event.get('p'), serial=pickle.dumps)
+            except (pickle.PicklingError, KeyError) as e:
                 log.warn('send_to_tracer(%s, event=%s) failed: %s'
-                         % (uuid, event, k))
+                         % (uuid, event, e))
                 raise  # The event is just wrong, reraise this to the user.
-            except pickle.PicklingError as p:
-                log.warn('send_to_tracer(%s, event=%s) failed: %s'
-                         % (uuid, event, p))
-                return
         if not msg:
             return  # No message to send.
 
@@ -303,15 +300,11 @@ class SessionStore(object):
 
         if event:
             try:
-                msg = fmt_msg(event['e'], event.get('p'), serial='json')
-            except KeyError as k:
+                msg = fmt_msg(event['e'], event.get('p'), serial=json.dumps)
+            except (KeyError, ValueError) as e:
                 log.warn('send_to_clients(%s, event=%s) failed: %s'
-                         % (uuid, event, k))
+                         % (uuid, event, e))
                 raise
-            except ValueError as v:
-                log.warn('send_to_clients(%s, event=%s) failed: %s'
-                         % (uuid, event, v))
-                return
         if not msg:
             return  # No message to send.
 

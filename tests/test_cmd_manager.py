@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from contextlib import contextmanager
+import json
 import signal
 from unittest import TestCase
 
@@ -85,7 +86,7 @@ class RemoteCommandManagerTester(TestCase):
                 ('ws://%s:%s' % (self.client_host, self.client_port))
                 + DEFAULT_ROUTE_FMT.format(uuid=uuid)
             )
-            ws.send(fmt_msg('start', '', serial='json'))
+            ws.send(fmt_msg('start', '', serial=json.dumps))
             while uuid not in self.server.session_store:
                 pass
             yield ws
@@ -150,7 +151,7 @@ class RemoteCommandManagerTester(TestCase):
         cmd_manager.start('')
         with self.connect_client():
             self.server.session_store.send_to_tracer(
-                uuid='mock',
+                uuid=tracer.uuid,
                 event=fmt_msg(event, payload)
             )
             with Timeout(0.1, False):
@@ -159,7 +160,7 @@ class RemoteCommandManagerTester(TestCase):
             attrgetter(tracer).assert_called()
 
         # Kill the session we just created
-        self.server.session_store.slaughter('mock')
+        self.server.session_store.slaughter(tracer.uuid)
 
     def test_pause(self):
         """

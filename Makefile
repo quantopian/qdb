@@ -12,7 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-all: clean style test
+all: requirements clean style test
 
 clean:
 	python etc/clean.py
@@ -22,3 +22,7 @@ style:
 
 test:
 	nosetests tests/
+
+requirements:
+	pip install -r etc/requirements_dev.txt
+	pip install -r etc/requirements.txt

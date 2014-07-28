@@ -62,6 +62,8 @@ frame.
 
 The server will always send back data that is formatted in this way.
 
+For a complete overview of the communication protocol, see docs/comm.md
+
 
 ### Modularity ###
 
