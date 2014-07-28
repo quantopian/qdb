@@ -17,7 +17,6 @@ patch_all()
 
 from collections import namedtuple
 import errno
-import json
 from struct import pack
 from time import time
 
@@ -32,17 +31,11 @@ try:
 except ImportError:
     import pickle
 
-from qdb.comm import fmt_msg
+from qdb.comm import fmt_msg, fmt_err_msg
 
-# The number of minutes that a session can go without sending a message before
-# it is cleaned by the gc.
-SESSION_INACTIVITY_TIMEOUT = 10  # minutes
+# Symbolic constant for the attach_timeout case.
+ALLOW_ORPHANS = 0
 
-# The time that a socket will wait for the other side to connect.
-ATTACH_TIMEOUT = 60  # seconds
-
-# The number of seconds to have the session gc sleep for in between passes.
-SESSION_GC_SLEEP_TIME = 60  # seconds
 
 log = Logger('QdbSessionStore')
 
@@ -56,8 +49,11 @@ class DebuggingSession(namedtuple('DebuggingSessionBase', ['tracer',
     debugged, including the socket to the client, the websockets to the
     client, and the timers that manage new connections.
     """
-    def __new__(cls, tracer=None, clients=None,
-                both_sides_event=None, timestamp=None):
+    def __new__(cls,
+                tracer=None,
+                clients=None,
+                both_sides_event=None,
+                timestamp=None):
         clients = clients or set()
         both_sides_event = both_sides_event or Event()
         timestamp = timestamp or time()
@@ -104,10 +100,24 @@ class SessionStore(object):
     to the underlying tracer.
     """
     def __init__(self,
-                 inactivity_timeout=SESSION_INACTIVITY_TIMEOUT,
-                 sweep_time=SESSION_GC_SLEEP_TIME,
-                 attach_timeout=ATTACH_TIMEOUT,
+                 inactivity_timeout=10,  # minutes
+                 sweep_time=1,  # minute
+                 attach_timeout=60,  # seconds
                  timeout_disable_mode='soft'):
+        """
+        inactivity_timeout is the amount of time in minutes that a session may
+        go without any messages being sent before it is killed. If
+        inactivity_timeout is None, then sessions may sit innactive forever.
+        sweep_time is the amount of time in minutes between checks to kill
+        inactive sessions.
+        attach_timeout is the amount of time in secondsto wait for both sides
+        of a session to attach before killing one off. If attach_timeout is
+        None, then it will wait forever. If attach_timeout is 0, then it will
+        allow for orphaned sessions, meaning a clients with no tracer, or a
+        tracer with no clients. These may be attached later.
+        timeout_disable_mode is the mode to kill the sessions with in the event
+        of a timeout. This mode may be 'hard' or 'soft'.
+        """
         if timeout_disable_mode not in ['soft', 'hard']:
             raise ValueError("timeout_disable_mode must be 'hard' or 'soft'")
         self.inactivity_timeout = inactivity_timeout
@@ -166,15 +176,17 @@ class SessionStore(object):
         Starts the session store service.
         """
         log.info('Starting qdb.server.session_store')
-        self._gc_glet = gevent.spawn(self._run_gc)
+        if self.inactivity_timeout:
+            self._gc_glet = gevent.spawn(self._run_gc)
 
     def stop(self):
         """
         Stops the session store service that is running.
         """
         log.info('Stopping qdb.server.session_store')
-        self._gc_glet.kill(timeout=5)
-        self.slaughter_all()
+        if self._gc_glet:
+            self._gc_glet.kill(timeout=5)
+        self.slaughter_all(self.timeout_disable_mode)
 
     def attach_tracer(self, uuid, socket):
         """
@@ -190,17 +202,27 @@ class SessionStore(object):
             session = DebuggingSession()
 
         self._sessions[uuid] = session.attach_tracer(socket)
-        # Wait for the client.
+        # Wait for the client if needed.
+        if self.attach_timeout == 0:
+            log.info('Attached %stracer for session %s'
+                     % ('' if self._sessions[uuid].clients else 'orphaned ',
+                        uuid))
+            return True
         if not self._sessions[uuid].both_sides_event.wait(self.attach_timeout):
-            self.slaughter(uuid)
+            # Signal to the tracer that no client attached.
+            self._send_to_socket(socket, fmt_err_msg(
+                'client', 'No client',
+                serial='pickle'
+            ))
+            self.slaughter(uuid, self.timeout_disable_mode)
             log.warn('No client came to debug %s' % uuid)
             return False
         log.info('Session %s has started' % uuid)
         return True
 
-    def attach_client(self, uuid, socket):
+    def attach_client(self, uuid, ws):
         """
-        Attaches a tracer for uuid at the socket.
+        Attaches a client for uuid at the ws.
         This call waits for the client to come.
         Returns True iff the client came and the session is ready to begin,
         otherwise returns False and does not add the session to the store.
@@ -211,9 +233,16 @@ class SessionStore(object):
         else:
             session = DebuggingSession()
 
-        self._sessions[uuid] = session.attach_client(socket)
-        # Wait for the client.
+        self._sessions[uuid] = session.attach_client(ws)
+        # Wait for the tracer if needed.
+        if self.attach_timeout == ALLOW_ORPHANS:
+            log.info('Attached %sclient for session %s'
+                     % ('' if self._sessions[uuid].tracer else 'orphaned ',
+                        uuid))
+            return True
         if not self._sessions[uuid].both_sides_event.wait(self.attach_timeout):
+            # Signal to the client that no tracer attached.
+            ws.send(fmt_err_msg('tracer', 'No tracer', serial='json'))
             self.slaughter(uuid)
             log.warn('No tracer attached for %s' % uuid)
             return False
@@ -222,33 +251,42 @@ class SessionStore(object):
     def _update_timestamp(self, uuid):
         self._sessions[uuid] = self._sessions[uuid].update_timestamp()
 
+    @staticmethod
+    def _send_to_socket(sck, msg):
+        """
+        Sends a message to a socket, prefixed with the length.
+        The preferred method of sending a message to a socket is through the
+        send_to_tracer method.
+        """
+        sck.sendall(pack('>i', len(msg)))
+        sck.sendall(msg)
+
     def send_to_tracer(self, uuid, msg=None, event=None):
         """
         Sends a pre-packed message or event the tracer uuid.
         """
+        if uuid not in self._sessions:
+            log.warn('send_to_tracer failed: session %s does not exist'
+                     % uuid)
+            return  # Session doesn't exist.
+
         if event:
             try:
-                msg_dict = {
-                    'e': event['e'],
-                    'p': event.get('p')
-                }
-                msg = pickle.dumps(msg_dict)
+                msg = fmt_msg(event['e'], event.get('p'), serial='pickle')
+            except KeyError as k:
+                log.warn('send_to_tracer(%s, event=%s) failed: %s'
+                         % (uuid, event, k))
+                raise  # The event is just wrong, reraise this to the user.
             except pickle.PicklingError as p:
                 log.warn('send_to_tracer(%s, event=%s) failed: %s'
                          % (uuid, event, p))
                 return
         if not msg:
             return  # No message to send.
-        if uuid not in self._sessions:
-            log.warn('send_to_tracer failed: session %s does not exist'
-                     % uuid)
-            return  # Session doesn't exist.
 
         sck = self._sessions[uuid].tracer
         if sck:
-            # Pack the length and then send the data.
-            sck.sendall(pack('>i', len(msg)))
-            sck.sendall(msg)
+            self._send_to_socket(sck, msg)
         else:
             log.warn('No client session is alive for %s' % uuid)
         self._update_timestamp(uuid)
@@ -258,22 +296,25 @@ class SessionStore(object):
         Routes a message to all of the clients taking the same arguments as
         send_to_client.
         """
+        if uuid not in self._sessions:
+            log.warn('send_to_clients failed: session %s does not exist'
+                     % uuid)
+            return  # Session doesn't exist.
+
         if event:
             try:
-                msg_dict = {'e': event['e']}
-                if 'p' in event:
-                    msg_dict['p'] = event['p']
-                msg = json.dumps(msg_dict)
+                msg = fmt_msg(event['e'], event.get('p'), serial='json')
+            except KeyError as k:
+                log.warn('send_to_clients(%s, event=%s) failed: %s'
+                         % (uuid, event, k))
+                raise
             except ValueError as v:
                 log.warn('send_to_clients(%s, event=%s) failed: %s'
                          % (uuid, event, v))
                 return
         if not msg:
             return  # No message to send.
-        if uuid not in self._sessions:
-            log.warn('send_to_clients failed: session %s does not exist'
-                     % uuid)
-            return  # Session doesn't exist.
+
         clients = self._sessions[uuid].clients
         for client in set(clients):
             try:
@@ -294,7 +335,7 @@ class SessionStore(object):
         if not session:
             return  # Slaughtering a session that does not exits.
         # Close all the clients.
-        disable_event = fmt_msg('disable', to_pickle=False)
+        disable_event = fmt_msg('disable')
         self.send_to_clients(uuid, event=disable_event)
         for client in session.clients:
             try:

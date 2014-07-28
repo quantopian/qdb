@@ -13,7 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from contextlib import contextmanager
-import json
 import signal
 from unittest import TestCase
 
@@ -22,22 +21,15 @@ from mock import Mock
 from nose_parameterized import parameterized
 from websocket import create_connection
 
-from qdb.comm import RemoteCommandManager, ServerLocalCommandManager
+from qdb.comm import RemoteCommandManager, ServerLocalCommandManager, fmt_msg
 from qdb.errors import (
     QdbFailedToConnect,
     QdbAuthenticationError,
 )
 from qdb.server import QdbServer
-from qdb.server.server import DEFAULT_ROUTE_FMT
+from qdb.server.client import DEFAULT_ROUTE_FMT
 
 from tests import fix_filename
-
-
-def fmt_msg(event, payload=None):
-    return {
-        'e': event,
-        'p': payload,
-    }
 
 
 class RemoteCommandManagerTester(TestCase):
@@ -93,7 +85,7 @@ class RemoteCommandManagerTester(TestCase):
                 ('ws://%s:%s' % (self.client_host, self.client_port))
                 + DEFAULT_ROUTE_FMT.format(uuid=uuid)
             )
-            ws.send(json.dumps(fmt_msg('start', '')))
+            ws.send(fmt_msg('start', '', serial='json'))
             while uuid not in self.server.session_store:
                 pass
             yield ws

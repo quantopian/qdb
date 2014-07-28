@@ -45,13 +45,13 @@ class QdbTracerServer(StreamServer):
     """
     def __init__(self,
                  session_store,
-                 host,
-                 port,
-                 tracer_auth_fn,
-                 auth_timeout):
+                 host='localhost',
+                 port=8001,
+                 tracer_auth_fn=None,
+                 auth_timeout=60):  # seconds
         self.auth_timeout = auth_timeout
         self.session_store = session_store
-        self.tracer_auth_fn = tracer_auth_fn
+        self.tracer_auth_fn = tracer_auth_fn or (lambda _: True)  # No auth
         super(QdbTracerServer, self).__init__(
             (host, port),
             handle=self.handle_tracer,

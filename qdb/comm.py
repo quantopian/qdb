@@ -13,17 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from abc import ABCMeta, abstractmethod
-
 import atexit
 from bdb import Breakpoint
 from contextlib import contextmanager
 import errno
-
-try:
-    import cPickle as pickle
-except ImportError:
-    import pickle
-
+import json
 import os
 import signal
 from StringIO import StringIO
@@ -42,6 +36,11 @@ from qdb.errors import (
     QdbAuthenticationError,
 )
 
+try:
+    import cPickle as pickle
+except ImportError:
+    import pickle
+
 log = Logger('Qdb')
 
 
@@ -58,18 +57,26 @@ def capture_output():
         sys.stdout = sys.__stdout__
 
 
-def fmt_msg(event, payload=None, to_pickle=True):
+def fmt_msg(event, payload=None, serial=None):
     """
     Packs a message to be sent to the server.
     """
+    if serial and serial not in ['pickle', 'json']:
+        raise ValueError("'serial' must be 'pickle', 'json', or falsey'")
+
     frame = {
         'e': event,
         'p': payload,
     }
-    return pickle.dumps(frame) if to_pickle else frame
+    if serial == 'pickle':
+        return pickle.dumps(frame)
+    elif serial == 'json':
+        return json.dumps(frame)
+    else:
+        return frame
 
 
-def fmt_err_msg(error_type, data, to_pickle=True):
+def fmt_err_msg(error_type, data, serial=None):
     """
     Constructs an error message.
     """
@@ -78,7 +85,7 @@ def fmt_err_msg(error_type, data, to_pickle=True):
             'type': error_type,
             'data': data,
         },
-        to_pickle=to_pickle
+        serial=serial,
     )
 
 
@@ -146,7 +153,8 @@ class CommandManager(object):
             'print', {
                 'input': input,
                 'output': output
-            })
+            },
+            serial='pickle')
         )
 
     def send_stack(self):
@@ -181,13 +189,13 @@ class CommandManager(object):
         """
         Sends a formatted error message.
         """
-        self.send(fmt_err_msg(error_type, error_data))
+        self.send(fmt_err_msg(error_type, error_data, serial='pickle'))
 
     def send_event(self, event, payload=None):
         """
         Sends a formatted event.
         """
-        self.send(fmt_msg(event, payload))
+        self.send(fmt_msg(event, payload, serial='pickle'))
 
     def next_command(self, msg=None):
         """
@@ -316,7 +324,8 @@ class RemoteCommandManager(CommandManager):
                     'uuid': self.tracer.uuid,
                     'auth': auth_msg,
                     'local': (0, 0),
-                }
+                },
+                serial='pickle',
             )
         )
         atexit.register(self.stop)
@@ -476,13 +485,13 @@ class RemoteCommandManager(CommandManager):
         try:
             breakpoint = self.format_breakpoint_dict(payload)
         except QdbBreakpointReadError as b:
-            err_msg = fmt_err_msg('set_break', str(b))
+            err_msg = fmt_err_msg('set_break', str(b), serial='pickle')
             return self.next_command(err_msg)
 
         try:
             self.tracer.set_break(**breakpoint)
         except QdbUnreachableBreakpoint as u:
-            err_msg = fmt_err_msg('set_breakpoint', str(u))
+            err_msg = fmt_err_msg('set_breakpoint', str(u), serial='pickle')
             return self.next_command(err_msg)
 
         self.next_command()
@@ -493,7 +502,7 @@ class RemoteCommandManager(CommandManager):
         try:
             breakpoint = self.format_breakpoint_dict(payload)
         except QdbBreakpointReadError as b:
-            err_msg = fmt_err_msg('clear_break', str(b))
+            err_msg = fmt_err_msg('clear_break', str(b), serial='pickle')
             return self.next_command(err_msg)
 
         self.tracer.clear_break(**breakpoint)
@@ -504,25 +513,29 @@ class RemoteCommandManager(CommandManager):
             return self.next_command()
 
         if 'file' not in payload:
-            err_msg = fmt_err_msg('payload', 'list: expected field \'file\'')
+            err_msg = fmt_err_msg('payload', 'list: expected field \'file\'',
+                                  serial='pickle')
             return self.next_command(err_msg)
         try:
             if self.tracer.skip_fn(payload['file']):
                 raise KeyError  # Handled the same, avoids duplication.
             if not (payload.get('start') or payload.get('end')):
-                msg = fmt_msg('list', self.tracer.get_file(payload['file']))
+                msg = fmt_msg('list', self.tracer.get_file(payload['file']),
+                              serial='pickle')
             else:
                 # Send back the slice of the file that they requested.
                 msg = fmt_msg(
                     'list',
                     self.tracer.file_cache[payload['file']][
                         payload.get('start'):payload.get('end')
-                    ]
+                    ],
+                    serial='pickle'
                 )
         except KeyError:  # The file failed to be cached.
             err_msg = fmt_err_msg(
                 'list',
                 'File %s does not exist' % payload['file'],
+                serial='pickle'
             )
             return self.next_command(err_msg)
 
@@ -540,7 +553,8 @@ class RemoteCommandManager(CommandManager):
         if payload not in ['soft', 'hard']:
             err_msg = fmt_err_msg(
                 'disable',
-                "payload must be either 'soft' or 'hard'"
+                "payload must be either 'soft' or 'hard'",
+                serial='pickle'
             )
             return self.next_command(err_msg)
         self.tracer.disable(payload)
@@ -570,12 +584,12 @@ def get_events_from_socket(sck):
             cmd['e']
         except (socket.error, pickle.UnpicklingError) as e:
             # We can no longer talk the the server.
-            log.warn('Error reading from socket')
-            yield fmt_err_msg('socket', str(e), to_pickle=False)
+            log.warn('Exception raised reading from socket')
+            yield fmt_err_msg('socket', str(e))
             return
         except KeyError:
             log.warn('Client sent invalid cmd.')
-            yield fmt_err_msg('command', "No 'e' field sent", to_pickle=False)
+            yield fmt_err_msg('command', "No 'e' field sent")
             return
         else:
             # Yields only valid commands.
@@ -608,7 +622,7 @@ class ServerReader(object):
         Infinitly reads events off the server, if it is a pause, then it pauses
         the process, otherwise, it passes the message along.
         """
-        self.debugger_pipe.put(fmt_msg('reader_started', to_pickle=False))
+        self.debugger_pipe.put(fmt_msg('reader_started'))
         try:
             for event in get_events_from_socket(self.server_comm):
                 if event['e'] == 'pause':
@@ -618,7 +632,7 @@ class ServerReader(object):
 
                     # If we get here, we had a socket error that dropped us
                     # out of get_events(), signal this to the process.
-            self.debugger_pipe.put(fmt_msg('disable', 'soft', to_pickle=False))
+            self.debugger_pipe.put(fmt_msg('disable', 'soft'))
         finally:
             log.info('ServerReader terminating')
 
@@ -642,7 +656,8 @@ class ServerLocalCommandManager(RemoteCommandManager):
                     'uuid': self.tracer.uuid,
                     'auth': auth_msg,
                     'local': (os.getpid(), self.tracer.pause_signal),
-                }
+                },
+                serial='pickle',
             )
         )
 

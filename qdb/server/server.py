@@ -19,22 +19,14 @@ gevent.monkey.patch_all()
 from gevent.event import Event
 from logbook import Logger
 
-from qdb.server.client import QdbClientServer
+from qdb.server.client import QdbClientServer, DEFAULT_ROUTE
 from qdb.server.session_store import (
     SessionStore,
-    SESSION_INACTIVITY_TIMEOUT,
-    SESSION_GC_SLEEP_TIME,
-    ATTACH_TIMEOUT,
 )
 from qdb.server.tracer import QdbTracerServer
 
 log = Logger('QdbServer')
 
-# The default route.
-DEFAULT_ROUTE = '/websocket/(.+)'
-
-# The default route as a format string.
-DEFAULT_ROUTE_FMT = '/websocket/{uuid}'
 
 # The number of seconds a connection has to authenticate.
 AUTH_TIMEOUT = 60  # seconds
@@ -52,10 +44,10 @@ class QdbServer(object):
                  client_host='localhost',
                  client_port=8002,
                  route=DEFAULT_ROUTE,
-                 auth_timeout=AUTH_TIMEOUT,
-                 inactivity_timeout=SESSION_INACTIVITY_TIMEOUT,
-                 attach_timeout=ATTACH_TIMEOUT,
-                 sweep_time=SESSION_GC_SLEEP_TIME,
+                 auth_timeout=60,  # seconds
+                 inactivity_timeout=10,  # minutes
+                 attach_timeout=60,  # seconds
+                 sweep_time=1,  # minute
                  timeout_disable_mode='soft',
                  tracer_auth_fn=None,
                  client_auth_fn=None,
@@ -69,8 +61,6 @@ class QdbServer(object):
                             attach_timeout=attach_timeout,
                             sweep_time=sweep_time,
                             timeout_disable_mode=timeout_disable_mode)
-        client_auth_fn = client_auth_fn or (lambda _: True)  # No auth.
-        tracer_auth_fn = tracer_auth_fn or (lambda _: True)
         self._running = False
         self._stop = Event()
         self.tracer_server = tracer_server or QdbTracerServer(
@@ -98,6 +88,19 @@ class QdbServer(object):
         Returns True iff the server is running, otherwise returns False.
         """
         return self._running
+
+    def __enter__(self):
+        """
+        Allows the server to be used a context manager.
+        """
+        self.start()
+        return self
+
+    def __exit__(self, type, value, traceback):
+        """
+        Stops the server when exiting, reraising all errors.
+        """
+        self.stop()
 
     def start(self):
         """

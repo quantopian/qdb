@@ -23,19 +23,27 @@ from geventwebsocket import WebSocketError
 from geventwebsocket.handler import WebSocketHandler
 from logbook import Logger
 
+from qdb.comm import fmt_msg, fmt_err_msg
 from qdb.errors import QdbInvalidRoute
 
 log = Logger('QdbClientServer')
 
 
+# The default route.
+DEFAULT_ROUTE = r'/(.+)'
+
+# The default route as a format string.
+DEFAULT_ROUTE_FMT = '/{uuid}'
+
+
 class QdbClientServer(object):
     def __init__(self,
                  session_store,
-                 host,
-                 port,
-                 route,
-                 client_auth_fn,
-                 auth_timeout):
+                 host='localhost',
+                 port=8002,
+                 route=DEFAULT_ROUTE,
+                 client_auth_fn=None,
+                 auth_timeout=60):  # seconds
         """
         The parameters here are the same  for the client server except for
         route, where route is a regular expression (as a string or regex
@@ -48,7 +56,7 @@ class QdbClientServer(object):
         the start_event or first message. This is measured in seconds.
         """
         self.address = host, port
-        self.client_auth_fn = client_auth_fn
+        self.client_auth_fn = client_auth_fn or (lambda _: True)  # No auth
         self.auth_timeout = auth_timeout
         self.route = re.compile(route, re.IGNORECASE)
         self.session_store = session_store
@@ -65,15 +73,8 @@ class QdbClientServer(object):
         """
         Sends an error event back to the client.
         """
-        event = {
-            'e': 'error',
-            'p': {
-                'type': error_type,
-                'data': error_data,
-            },
-        }
         try:
-            ws.send(json.dumps(event))
+            ws.send(fmt_err_msg(error_type, error_data, serial='json'))
         except WebSocketError:
             return
 
@@ -143,7 +144,7 @@ class QdbClientServer(object):
             if failed:
                 try:
                     self.send_error(ws, 'auth', message)
-                    ws.send(json.dumps({'e': 'disable'}))
+                    ws.send(fmt_msg('disable', serial='json'))
                 except WebSocketError:
                     # We are unable to send the disable message for some
                     # reason; however, they already failed auth so suppress
@@ -153,7 +154,6 @@ class QdbClientServer(object):
 
             if not self.session_store.attach_client(uuid, ws):
                 # We are attaching to a client that does not exist.
-                ws.send(json.dumps({'e': 'disable'}))
                 return
 
             self.session_store.send_to_tracer(uuid, event=start_event)
