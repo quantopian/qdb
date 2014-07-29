@@ -1,3 +1,17 @@
+;;
+;; Copyright 2014 Quantopian, Inc.
+;;
+;; Licensed under the Apache License, Version 2.0 (the "License");
+;; you may not use this file except in compliance with the License.
+;; You may obtain a copy of the License at
+;;
+;; http://www.apache.org/licenses/LICENSE-2.0
+;;
+;; Unless required by applicable law or agreed to in writing, software
+;; distributed under the License is distributed on an "AS IS" BASIS,
+;; WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+;; See the License for the specific language governing permissions and
+;; limitations under the License.
 (defvar qdb-executable (executable-find "qdb-cli")
   "Program used by `run-qdb'")
 
@@ -20,7 +34,7 @@
   '("b" "break"
     "c" "continue"
     "cl" "clear"
-    "list"
+    "l" "list"
     "n" "next"
     "q" "quit"
     "s" "step"
@@ -51,21 +65,29 @@
 
 (defun qdb-open-out-file (out-file qdb-buffer)
   "Opens the out-file in a tail -f type mode and pops back the repl."
+  (call-process-shell-command "touch" nil nil nil out-file)
   (start-process "qdb-out" "*qdb-out*" "tail" "-f" out-file)
   (switch-to-buffer "*qdb-out*")
   (read-only-mode)
   (pop-to-buffer qdb-buffer))
 
+
+(defvar qdb-default-uuid "qdb")
+(defvar qdb-default-addr "ws://localhost:8002/{uuid}")
+(defvar qdb-default-auth "")
+
 (defun run-qdb (uuid addr auth)
   "Starts a new qdb session inside of emacs."
-  (interactive "suuid (default: \"qdb\"): \nsaddr (default: \
-\"ws://localhost:8002/debug_session/{uuid}\"): \nsauth (default: \"\"): ")
+  (interactive "suuid: \nsaddr: \nsauth: ")
   (let* ((real-uuid (if (not (string= uuid ""))
                         uuid
-                      "qdb"))
+                      qdb-default-uuid))
          (real-addr (if (not (string= addr ""))
                         addr
-                      "ws://localhost:8002/debug_session/{uuid}"))
+                        qdb-default-addr))
+         (real-auth (if (not (string= auth ""))
+                        auth
+                      qdb-default-auth))
          (qdb-buffer (make-comint-in-buffer
                       "qdb" nil qdb-executable
                       nil "-w" real-addr "-u" real-uuid "-a" auth)))

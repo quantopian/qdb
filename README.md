@@ -28,7 +28,7 @@ The server is the main routing station for messages between the clients and the
 tracer. The server is responsible for validating that the messages from the
 clients are well formed and routing them to the tracer. A single server may
 manage multiple tracers, so it is responsible for making sure that connections
-are routed to the proper place. The server can clean up tracer processes whos
+are routed to the proper place. The server can clean up tracer processes whose
 clients have become inactive if the server manager decides.
 
 
@@ -57,10 +57,12 @@ Which steps into the next expression on the tracer. The client may also send:
         "p": "a + b"
     }
 
-This command is equivelent to evaluating the code `a + b` in the current stack
+This command is equivalent to evaluating the code `a + b` in the current stack
 frame.
 
 The server will always send back data that is formatted in this way.
+
+For a complete overview of the communication protocol, see docs/comm.md
 
 
 ### Modularity ###

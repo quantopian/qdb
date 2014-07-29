@@ -1,19 +1,30 @@
+#
+# Copyright 2014 Quantopian, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+from abc import ABCMeta, abstractmethod
+import atexit
 from bdb import Breakpoint
 from contextlib import contextmanager
-
-try:
-    import cPickle as pickle
-except ImportError:
-    import pickle
-
-from multiprocessing import Process, Pipe
+import errno
 import os
 import signal
-import socket
 from StringIO import StringIO
 from struct import pack, unpack
 import sys
 
+from gevent import socket, Timeout
+import gipc
 from logbook import Logger
 
 from qdb.errors import (
@@ -21,7 +32,13 @@ from qdb.errors import (
     QdbBreakpointReadError,
     QdbCommunicationError,
     QdbUnreachableBreakpoint,
+    QdbAuthenticationError,
 )
+
+try:
+    import cPickle as pickle
+except ImportError:
+    import pickle
 
 log = Logger('Qdb')
 
@@ -39,28 +56,30 @@ def capture_output():
         sys.stdout = sys.__stdout__
 
 
-def fmt_msg(event, payload=None):
+def fmt_msg(event, payload=None, serial=None):
     """
     Packs a message to be sent to the server.
+    Serial is a function to call on the frame to serialize it, e.g:
+    json.dumps or pickle.dumps
     """
-    if payload is None:
-        return pickle.dumps({
-            'e': event,
-        })
-    return pickle.dumps({
+    frame = {
         'e': event,
-        'p': payload
-    })
+        'p': payload,
+    }
+    return serial(frame) if serial else frame
 
 
-def fmt_err_msg(error_type, data):
+def fmt_err_msg(error_type, data, serial=None):
     """
     Constructs an error message.
     """
-    return fmt_msg('error', {
-        'type': error_type,
-        'data': data,
-    })
+    return fmt_msg(
+        'error', {
+            'type': error_type,
+            'data': data,
+        },
+        serial=serial,
+    )
 
 
 def fmt_breakpoint(breakpoint):
@@ -70,172 +89,266 @@ def fmt_breakpoint(breakpoint):
     return {
         'file': breakpoint.file,
         'line': breakpoint.line,
-        'temp': breakpoint.temp,
+        'temp': breakpoint.temporary,
         'cond': breakpoint.cond,
+        'func': breakpoint.funcname,
     }
-
-
-# A message that denotes everything worked fine.
-ACKMSG = fmt_msg('ack')
 
 
 class CommandManager(object):
     """
-    Manager that processes commands.
+    An abstract base class for the command managers that control the tracer.
     """
-    def __init__(self, debugger):
-        self.debugger = debugger
+    __metaclass__ = ABCMeta
 
-        # Construct a pipe to talk to the reader.
-        self.pipe, child_end = Pipe()
+    def __init__(self, tracer):
+        self.tracer = tracer
 
-        # Attach the signal handler to manage the pause command.
-        signal.signal(debugger.pause_signal, self._pause_handler)
-
-        log.info('Connecting to (%s, %d)' % debugger.address)
-        self.socket = None
-        for n in xrange(self.debugger.retry_attepts):
-            try:
-                self.socket = socket.create_connection(debugger.address)
-                break
-            except socket.error:
-                log.warn(
-                    'Client %s failed to connect to (%s, %d) on attempt %d...'
-                    % (self.debugger.uuid, debugger.address[0],
-                       debugger.address[1], n + 1)
-                )
-        if self.socket is None:
-            log.warn(
-                'Failed to connect to (%s, %d), no longer retying.'
-                % debugger.address
-            )
-            raise QdbFailedToConnect(debugger.address, debugger.retry_attepts)
-        log.info('Client %s connected to (%s, %d)'
-                 % (self.debugger.uuid, self.debugger.address[0],
-                    self.debugger.address[1]))
-
-        # Create the comminicator assuming we did not raise any exceptions.
-        self.reader = Process(
-            target=ServerReader,
-            args=(child_end, os.getpid(), self.socket),
-        )
-        self._start()
-
-    def _start(self):
-        """
-        Begins processing commands from the server.
-        """
-        self.send(
-            fmt_msg('new_tracer', self.debugger.uuid)
-        )
-        self.reader.start()
-        self._command_generator = self._get_commands()
-
-    def unserialize_breakpoint(self, breakpoint_serial):
-        """
-        Parses a Breakpoint out of the serial data.
-        This returns a dictionary with the parameters to pass to
-        set_breakpoint.
-        If no breakpoint can be parsed out of breakpoint_serial, a
-        QdbBreakpointReadError is thrown with the serial data.
-        """
-        try:
-            bp = pickle.loads(breakpoint_serial)
-        except pickle.UnpicklingError:
-            raise QdbBreakpointReadError(breakpoint_serial)
-
-        if 'file' in bp and 'line' in bp:
-            # Do some formatting here to make the params cleaner.
-            if 'temp' in bp:
-                bp['temporary'] = bp['temp']
-                bp.pop('temp')
-            if 'cond' in bp:
-                bp['funcname'] = bp['func']
-                bp.pop('func')
-
-            return bp
-
-        raise QdbBreakpointReadError(Breakpoint(**bp))
-
-    def send_breakpoints(self):
-        """
-        Sends the serialized list of breakpoints to the server.
-        """
-        self.send_event(
-            'breakpoints',
-            map(fmt_breakpoint, self.debugger.get_all_breaks()),
-        )
-
-    def send_watchlist(self):
-        """
-        Sends the watchlist to the server.
-        """
-        self.send_event(
-            'watchlist',
-            map(lambda t: {'name': t[0], 'value': t[1]},
-                self.debugger.watchlist.iteritems()),
-        )
-
-    def send_print(self, input_, output):
-        """
-        Sends the print command results.
-        """
-        msg = fmt_msg('print', {
-            'input': input_,
-            'output': output
-        })
-        self.send(msg)
-
-    def fmt_stackframe(self, stackframe_line):
+    def _fmt_stackframe(self, stackframe, line):
         """
         Formats stackframe payload data.
         """
-        stackframe, line = stackframe_line
         filename = stackframe.f_code.co_filename
         func = stackframe.f_code.co_name
-        code = self.debugger.get_line(filename, line)
+        code = self.tracer.get_line(filename, line)
         return {
-            'file': self.debugger.canonic(filename),
+            'file': self.tracer.canonic(filename),
             'line': line,
             'func': func,
             'code': code,
         }
 
+    def send_breakpoints(self):
+        """
+        Sends the breakpoint list event.
+        """
+        self.send_event(
+            'breakpoints',
+            [fmt_breakpoint(breakpoint) for breakpoint in Breakpoint.bpbynumber
+             if breakpoint]
+        )
+
+    def send_watchlist(self):
+        """
+        Sends the watchlist event.
+        """
+        self.send_event(
+            'watchlist',
+            [{'expr': k, 'value': v}
+             for k, v in self.tracer.watchlist.iteritems()],
+        )
+
+    def send_print(self, input, output):
+        """
+        Sends the print event with the given input and output.
+        """
+        self.send(fmt_msg(
+            'print', {
+                'input': input,
+                'output': output
+            },
+            serial=pickle.dumps)
+        )
+
     def send_stack(self):
         """
-        Sends back the formated stack to the server.
+        Sends the stack event.
         """
         # Starting at the frame we are in, we need to filter based on the
-        # debugger's skip_fn rules. `s[0]` is the filename.
-        stack = filter(
-            lambda s: not self.debugger.skip_fn(s[0].f_code.co_filename),
-            self.debugger.stack
-        )
+        # tracer's skip_fn rules. We will also format each stackframe.
         self.send_event(
             'stack',
-            map(self.fmt_stackframe, stack),
+            [self._fmt_stackframe(stackframe, line)
+             for stackframe, line in self.tracer.stack
+             if not
+             self.tracer.skip_fn(
+                 self.tracer.canonic(stackframe.f_code.co_filename)
+             )],
         )
 
     def send_stdout(self):
         """
         Sends a print that denotes that this is coming from the process.
+        This function is a nop if the tracer is not set to redirect the
+        stdout to the client.
         """
-        self.debugger.stdout.seek(self.debugger.stdout_ptr)
-        out = self.debugger.stdout.read()
-        self.debugger.stdout_ptr = self.debugger.stdout.tell()
-        self.send_print('<stdout>', out)
+        if self.tracer.redirect_stdout:
+            self.tracer.stdout.seek(self.tracer.stdout_ptr)
+            out = self.tracer.stdout.read()
+            self.tracer.stdout_ptr = self.tracer.stdout.tell()
+            self.send_print('<stdout>', out)
 
     def send_error(self, error_type, error_data):
         """
-        Sends a formatted error message back to the server.
+        Sends a formatted error message.
         """
-        self.send(fmt_err_msg(error_type, error_data))
+        self.send(fmt_err_msg(error_type, error_data, serial=pickle.dumps))
 
     def send_event(self, event, payload=None):
         """
-        Sends a formatted event to the server.
+        Sends a formatted event.
         """
-        self.send(fmt_msg(event, payload))
+        self.send(fmt_msg(event, payload, serial=pickle.dumps))
+
+    def next_command(self, msg=None):
+        """
+        Processes the next command from the user.
+        If msg is given, it is sent with self.send(msg) before processing the
+        next command.
+        """
+        if msg:
+            self.send(msg)
+        self.user_next_command()
+
+    @abstractmethod
+    def send(self, msg):
+        """
+        Sends a raw (already pickled) message.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def user_next_command(self):
+        """
+        Processes the next command.
+        This method must be overridden to dictate how the commands are
+        processed.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def start(self, auth_msg=''):
+        """
+        Start acquiring new commands.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def stop(self):
+        """
+        Stop acquiring new commands.
+        Use this to release and resources needed to generate the commands.
+        """
+        raise NotImplementedError
+
+
+class NopCommandManager(CommandManager):
+    """
+    Nop command manager that never alters the state of the debugger.
+    This is useful if you want to manage the debugger in an alternate way.
+    """
+    def user_next_command(self):
+        pass
+
+    def send(self, msg):
+        pass
+
+    def start(self, msg):
+        pass
+
+    def stop(self):
+        pass
+
+
+class RemoteCommandManager(CommandManager):
+    """
+    Manager that processes commands from the server.
+    This is the default Qdb command manager.
+    """
+    def __init__(self, tracer):
+        super(RemoteCommandManager, self).__init__(tracer)
+
+        # Construct a pipe to talk to the reader.
+        self.pipe = None
+
+        # Attach the signal handler to manage the pause command.
+        signal.signal(tracer.pause_signal, self._pause_handler)
+
+        log.info('Connecting to (%s, %d)' % tracer.address)
+        self.socket = None
+        self.reader = None
+
+    def _socket_connect(self):
+        """
+        Connects to the socket or raise a QdbFailedToConnect error.
+        """
+        for n in xrange(self.tracer.retry_attepts):
+            # Try to connect to the server.
+            try:
+                self.socket = socket.create_connection(self.tracer.address)
+                # If we made it here, we connected and no longer need to retry.
+                break
+            except socket.error:
+                log.warn(
+                    'Client %s failed to connect to (%s, %d) on attempt %d...'
+                    % (self.tracer.uuid, self.tracer.address[0],
+                       self.tracer.address[1], n + 1)
+                )
+        if self.socket is None:
+            log.warn(
+                'Failed to connect to (%s, %d), no longer retying.'
+                % self.tracer.address
+            )
+            raise QdbFailedToConnect(
+                self.tracer.address,
+                self.tracer.retry_attepts
+            )
+        log.info('Client %s connected to (%s, %d)'
+                 % (self.tracer.uuid, self.tracer.address[0],
+                    self.tracer.address[1]))
+
+    def start(self, auth_msg=''):
+        """
+        Begins processing commands from the server.
+        """
+        self.pipe, child_end = gipc.pipe()
+        self._socket_connect()
+        self.reader = gipc.start_process(
+            target=ServerReader,
+            args=(child_end, os.getpid(), self.socket.fileno(),
+                  self.tracer.pause_signal),
+        )
+        with Timeout(5, QdbFailedToConnect(self.tracer.address,
+                                           self.tracer.retry_attepts)):
+            self.pipe.get()
+        self.send(
+            fmt_msg(
+                'start', {
+                    'uuid': self.tracer.uuid,
+                    'auth': auth_msg,
+                    'local': (0, 0),
+                },
+                serial=pickle.dumps,
+            )
+        )
+        atexit.register(self.stop)
+
+    def stop(self):
+        """
+        Stops the command manager, freeing its resources.
+        """
+        if self.reader:
+            self.reader.terminate()
+        self.socket.close()
+
+    def format_breakpoint_dict(self, breakpoint):
+        """
+        Makes our protocol for breakpoints match the Bdb protocol.
+        """
+        if 'file' not in breakpoint and self.tracer.default_file:
+            breakpoint['file'] = self.tracer.default_file
+        if 'file' in breakpoint and 'line' in breakpoint:
+            # Do some formatting here to make the params cleaner.
+            breakpoint['filename'] = breakpoint.pop('file')
+            breakpoint['lineno'] = breakpoint.pop('line')
+            if 'temp' in breakpoint:
+                breakpoint['temporary'] = breakpoint.pop('temp')
+            if 'cond' in breakpoint:
+                breakpoint['funcname'] = breakpoint.pop('func')
+
+            return breakpoint
+
+        raise QdbBreakpointReadError(breakpoint)
 
     def send(self, msg):
         """
@@ -258,76 +371,81 @@ class CommandManager(object):
         """
         Manager for the pause command.
         """
-        if signum == self.debugger.pause_signal:
-            self.debugger.set_step()
+        if signum == self.tracer.pause_signal:
+            self.tracer.set_step()
 
-    def _get_events(self):
+    def get_events(self):
         """
-        Infinitly yield events from the communicator.
+        Infinitly yield events from the Reader.
         """
         while self.reader.is_alive():
-            yield self.pipe.recv()
+            try:
+                event = self.pipe.get()
+            except IOError as i:
+                if i.errno == errno.EAGAIN:
+                    continue
+                raise
+            yield event
 
-    def _get_commands(self):
+    def get_commands(self):
         """
         Yields the commands out of the events.
         """
-        for event in self._get_events():
+        for event in self.get_events():
             if event['e'] == 'error':
                 self.handle_error(event.get('p'))
             else:
                 command = getattr(self, 'command_' + event['e'], None)
                 if not command:
-                    self.send_error('event', 'event %s does not exist'
+                    self.send_error('event', 'Command %s does not exist'
                                     % event['e'])
                 else:
                     yield lambda: command(event.get('p'))
 
     def handle_error(self, payload):
-        raise QdbCommunicationError(payload)
+        if payload['type'] == 'auth':
+            raise QdbAuthenticationError(payload['data'])
+        else:
+            raise QdbCommunicationError(payload)
 
-    def next_command(self, msg=None):
+    def user_next_command(self, msg=None):
         """
-        Returns the next command to be called with the current stackframe.
-        If msg provided, it sends the msg back the server first.
+        Processes the next message from the reader.
         """
-        # Send back the provided message.
-        if msg:
-            self.send(msg)
         try:
-            return next(self._command_generator)()
+            return next(self.get_commands())()
         except StopIteration:
-            raise QdbCommunicationError()
+            raise QdbCommunicationError('No more commands from server')
 
     def command_step(self, payload):
-        self.debugger.set_step()
+        self.tracer.set_step()
 
     def command_return(self, payload):
-        self.debugger.set_return(self.debugger.curframe)
+        self.tracer.set_return(self.tracer.curframe)
 
     def command_next(self, payload):
-        self.debugger.set_next(self.debugger.curframe)
+        self.tracer.set_next(self.tracer.curframe)
 
     def command_until(self, payload):
-        self.debugger.set_until(self.debugger.curframe)
+        self.tracer.set_until(self.tracer.curframe)
 
     def command_continue(self, payload):
-        self.debugger.set_continue()
+        self.tracer.set_continue()
 
     def command_eval(self, payload):
         if not self.payload_check(payload, 'eval'):
             return self.next_command()
         with capture_output() as out:
             try:
-                self.debugger.eval_fn(
+                self.tracer.eval_fn(
                     payload,
-                    self.debugger.curframe,
+                    self.tracer.curframe,
                     'single'
                 )
             except Exception as e:
                 self.send_print(
                     payload,
-                    self.debugger.eval_exception_packager(e)
+                    self.tracer.exception_serializer(e)
                 )
             else:
                 out_msg = out.getvalue()[:-1] if out.getvalue() \
@@ -340,26 +458,17 @@ class CommandManager(object):
         if not self.payload_check(payload, 'set_watch'):
             return self.next_command()
 
-        stackframe = self.debugger.curframe
-        for w in payload:
-            if w in stackframe.f_locals:
-                obj = stackframe.f_locals[w]
-            elif w in stackframe.f_globals:
-                obj = stackframe.f_globals[w]
-            else:
-                err_msg = fmt_err_msg('set_watch', w)
-                return self.next_command(err_msg)
-
-            self.debugger.watchlist[w] = obj
-
+        self.tracer.extend_watchlist(*payload)
         self.send_watchlist()
 
-    def command_remove_watch(self, payload):
+    def command_clear_watch(self, payload):
         if not self.payload_check(payload, 'clear_watch'):
             return self.next_command()
 
         for w in payload:
-            self.watchlist.pop(w)
+            # Default to None so that clearing values that have not been set
+            # acts as a nop instead of an error.
+            self.tracer.watchlist.pop(w, None)
 
         self.send_watchlist()
 
@@ -367,15 +476,19 @@ class CommandManager(object):
         if not self.payload_check(payload, 'set_break'):
             return self.next_command()
         try:
-            breakpoint = self.unserialize_breakpoint(payload)
+            breakpoint = self.format_breakpoint_dict(payload)
         except QdbBreakpointReadError as b:
-            err_msg = fmt_err_msg('set_break', str(b))
+            err_msg = fmt_err_msg('set_break', str(b), serial=pickle.dumps)
             return self.next_command(err_msg)
 
         try:
-            self.debugger.add_breakpoint(**breakpoint)
+            self.tracer.set_break(**breakpoint)
         except QdbUnreachableBreakpoint as u:
-            err_msg = fmt_err_msg('set_breakpoint', str(u))
+            err_msg = fmt_err_msg(
+                'set_breakpoint',
+                str(u),
+                serial=pickle.dumps
+            )
             return self.next_command(err_msg)
 
         self.next_command()
@@ -384,31 +497,44 @@ class CommandManager(object):
         if not self.payload_check(payload, 'clear_break'):
             return self.next_command()
         try:
-            breakpoint = self.unserialize_breakpoint(payload)
+            breakpoint = self.format_breakpoint_dict(payload)
         except QdbBreakpointReadError as b:
-            err_msg = fmt_err_msg('clear_break', str(b))
+            err_msg = fmt_err_msg('clear_break', str(b), serial=pickle.dumps)
             return self.next_command(err_msg)
 
-        self.debugger.remove_breakpoint(**breakpoint)
+        self.tracer.clear_break(**breakpoint)
         self.next_command()
 
     def command_list(self, payload):
         if not self.payload_check(payload, 'list'):
             return self.next_command()
 
-        if 'file' not in payload:
-            err_msg = fmt_err_msg('payload', 'list: expected field \'file\'')
-            return self.next_command(err_msg)
-        if not (payload.get('start') or payload.get('end')):
-            msg = fmt_msg('list', self.debugger.get_file(payload['file']))
-        else:
-            # Send back the slice of the file that they requested.
-            msg = fmt_msg(
+        filename = payload.get('file') or self.tracer.default_file
+        try:
+            if self.tracer.skip_fn(filename):
+                raise KeyError  # Handled the same, avoids duplication.
+            if not (payload.get('start') or payload.get('end')):
+                msg = fmt_msg(
+                    'list',
+                    self.tracer.get_file(payload['file']),
+                    serial=pickle.dumps
+                )
+            else:
+                # Send back the slice of the file that they requested.
+                msg = fmt_msg(
+                    'list',
+                    self.tracer.file_cache[filename][
+                        payload.get('start'):payload.get('end')
+                    ],
+                    serial=pickle.dumps
+                )
+        except KeyError:  # The file failed to be cached.
+            err_msg = fmt_err_msg(
                 'list',
-                self.debugger.file_cache[payload['file']][
-                    payload.get('start'):payload.get('end')
-                ]
+                'File %s does not exist' % payload['file'],
+                serial=pickle.dumps
             )
+            return self.next_command(err_msg)
 
         self.next_command(msg)
 
@@ -424,11 +550,47 @@ class CommandManager(object):
         if payload not in ['soft', 'hard']:
             err_msg = fmt_err_msg(
                 'disable',
-                'payload must be either \'soft\' or \'hard\''
+                "payload must be either 'soft' or 'hard'",
+                serial=pickle.dumps
             )
             return self.next_command(err_msg)
-        self.send(fmt_msg('disabled', None))
-        self.debugger.disable(payload)
+        self.tracer.disable(payload)
+
+
+def get_events_from_socket(sck):
+    """
+    Yields valid events from the server socket.
+    """
+    while True:
+        try:
+            rlen = sck.recv(4)
+            if len(rlen) != 4:
+                return
+            rlen = unpack('>i', rlen)[0]
+            bytes_received = 0
+            resp = ''
+            with Timeout(1, False):
+                while bytes_received < rlen:
+                    resp += sck.recv(rlen - bytes_received)
+                    bytes_received = len(resp)
+
+            if bytes_received != rlen:
+                return  # We are not getting bytes anymore.
+
+            cmd = pickle.loads(resp)
+            cmd['e']
+        except (socket.error, pickle.UnpicklingError) as e:
+            # We can no longer talk the the server.
+            log.warn('Exception raised reading from socket')
+            yield fmt_err_msg('socket', str(e))
+            return
+        except KeyError:
+            log.warn('Client sent invalid cmd.')
+            yield fmt_err_msg('event', "No 'e' field sent")
+            return
+        else:
+            # Yields only valid commands.
+            yield cmd
 
 
 class ServerReader(object):
@@ -436,11 +598,11 @@ class ServerReader(object):
     Object that reads from the server asyncronously from the process
     being debugged.
     """
-    def __init__(self, debugger_pipe, session_pid, server_comm,
-                 pause_signal=None):
-        self.pause_signal = signal.SIGUSR2
+    def __init__(self, debugger_pipe, session_pid, server_comm_fd,
+                 pause_signal):
+        self.pause_signal = pause_signal or signal.SIGUSR2
         self.debugger_pipe = debugger_pipe
-        self.server_comm = server_comm
+        self.server_comm = socket.fromfd(server_comm_fd, 0, 0)
         self.session_pid = session_pid
         self.socket_error = None
         self.process_messages()
@@ -452,42 +614,52 @@ class ServerReader(object):
         """
         os.kill(self.session_pid, self.pause_signal)
 
-    def get_events(self):
-        """
-        Infinitly yields valid events off of the socket.
-        """
-        while True:
-            try:
-                cmd_len = self.server_comm.recv(4)
-                if len(cmd_len) != 4:
-                    # We did not get a valid length, the stream is corrupt.
-                    return
-                cmd_len = unpack('>i', cmd_len)[0]
-                pre_unpickle = self.server_comm.recv(cmd_len)
-                cmd = pickle.loads(pre_unpickle)
-            except socket.error as e:
-                # We can no longer talk the the server.
-                self.debugger_pipe.send({'e': 'error', 'p': e})
-                return
-            except pickle.UnpicklingError as p:
-                msg = fmt_err_msg('pickle', str(p))
-                self.server_comm.sendall(pack('>i', len(msg)))
-                self.server_comm.sendall(msg)
-            else:
-                # Yields only valid commands.
-                yield cmd
-
     def process_messages(self):
         """
         Infinitly reads events off the server, if it is a pause, then it pauses
         the process, otherwise, it passes the message along.
         """
-        for event in self.get_events():
-            if event['e'] == 'pause':
-                self.command_pause()
-            else:
-                self.debugger_pipe.send(event)
+        self.debugger_pipe.put(fmt_msg('reader_started'))
+        try:
+            for event in get_events_from_socket(self.server_comm):
+                if event['e'] == 'pause':
+                    self.command_pause()
+                else:
+                    self.debugger_pipe.put(event)
 
-        # If we get here, we had a socket error that dropped us out of
-        # get_events(), signal this to the process.
-        self.debugger_pipe.send({'e': 'disable', 'e': 'soft'})
+                    # If we get here, we had a socket error that dropped us
+                    # out of get_events(), signal this to the process.
+            self.debugger_pipe.put(fmt_msg('disable', 'soft'))
+        finally:
+            log.info('ServerReader terminating')
+
+
+class ServerLocalCommandManager(RemoteCommandManager):
+    """
+    Use this command manager if you know for certain that the tracer will be
+    running on the same machine as the server. This circumvents the need for
+    spinning up the Reader process and lets the server take over some of that
+    responsibility. While using a normal RemoteCommandManager will work, this
+    incurs less overhead.
+    """
+    def start(self, auth_msg=''):
+        """
+        Begins processing commands from the server.
+        """
+        self._socket_connect()
+        self.send(
+            fmt_msg(
+                'start', {
+                    'uuid': self.tracer.uuid,
+                    'auth': auth_msg,
+                    'local': (os.getpid(), self.tracer.pause_signal),
+                },
+                serial=pickle.dumps,
+            )
+        )
+
+    def stop(self):
+        self.socket.close()
+
+    def get_events(self):
+        return get_events_from_socket(self.socket)
