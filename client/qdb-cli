@@ -44,7 +44,6 @@ class QdbRepl(Cmd, object):
         self.wsaddress = wsaddress
         self.uuid = uuid
         self._ws = None
-        self._stop = False
         super(QdbRepl, self).__init__()
 
     def _connect(self):
@@ -92,12 +91,6 @@ class QdbRepl(Cmd, object):
         Connects to the server before interacting.
         """
         self._connect()
-
-    def postcmd(self, stop, line):
-        """
-        Post command hook that allows us to stop the loop.
-        """
-        return stop or self._stop
 
     def parse_break_arg(self, arg, temp=False):
         """
@@ -150,7 +143,7 @@ class QdbRepl(Cmd, object):
         if not arg:
             self.missing_argument('unw(atch)')
             return
-        self.send_command('clear_watch', arg.split())
+        self.send_command('clear_watch', [arg])
     do_unw = do_unwatch
 
     def do_break(self, arg, temp=False):
@@ -182,8 +175,8 @@ class QdbRepl(Cmd, object):
         file_ = args[0]
         start = end = None
         try:
-            start, end = args[1:]
-        except ValueError:
+            start, end = map(int, args[1:])
+        except (ValueError, TypeError):
             pass
         self.send_command('list', {
             'file': file_,
@@ -192,6 +185,21 @@ class QdbRepl(Cmd, object):
         })
     do_l = do_list
 
+    def do_up(self, arg):
+        self.send_command('up')
+    do_u = do_up
+
+    def do_down(self, arg):
+        self.send_command('down')
+    do_d = do_down
+
+    def do_locals(self, arg):
+        self.send_command('locals')
+
+    def do_pause(self, arg):
+        self.send_command('pause')
+    do_p = do_pause
+
     def do_quit(self, arg):
         if not arg or arg == 'soft':
             self.send_command('disable', 'soft')
@@ -199,7 +207,9 @@ class QdbRepl(Cmd, object):
             self.send_command('disable', 'hard')
         else:
             print('*** error: disable: argument must be \'soft\' or \'hard\'')
-        self._stop = True  # Mark that we should exit the cmdloop.
+            return
+        self.printer.terminate()
+        exit(0)  # I think we're done here
     do_q = do_quit
     do_EOF = do_quit  # EOF soft kills.
 
@@ -239,20 +249,28 @@ class ServerPrinter(object):
     def event_print(self, payload):
         out = payload['output']
         if out:
-            self.writeln(payload['input'] + ': ' + out)
+            self.writeln(
+                '# %s%s: %s' % ('***ERROR: ' if payload['exc'] else '',
+                                payload['input'],
+                                out)
+            )
 
     def event_list(self, payload):
         self.writeln(payload)
 
     def event_stack(self, payload):
-        frame = payload[-1]
+        frame = payload['stack'][payload['index']]  # Current frame
         self.writeln('> %s:%d' % (frame['file'], frame['line']))
         self.writeln('-> ' + frame['code'])
 
     def event_watchlist(self, payload):
         self.writeln('watchlist: [')
         for watched in payload:
-            self.writeln('  > %s: %s' % (watched['expr'], watched['value']))
+            self.writeln(
+                '  > %s%s: %s'
+                % ('***ERROR: ' if watched['exc'] else '',
+                   watched['expr'], watched['value'])
+            )
         self.writeln(']')
 
     def event_breakpoints(self, payload):
@@ -271,6 +289,12 @@ class ServerPrinter(object):
 
     def event_return(self, payload):
         self.writeln('--> returning with %s' % payload)
+
+    def event_locals(self, payload):
+        self.writeln('locals: [')
+        for p in payload.iteritems():
+            self.writeln('  > %s: %s' % p)
+        self.writeln(']')
 
     def event_disable(self, payload):
         self.writeln('Disabled, goodbye.')
@@ -302,5 +326,7 @@ if __name__ == '__main__':
     repl.auth_msg = args.auth_msg
     if not os.path.isdir(TMP_DIR):
         os.mkdir(TMP_DIR)
-    repl.cmdloop()
-    os.remove(repl.filename)  # Cleans up the tmp output file.
+    try:
+        repl.cmdloop()
+    finally:
+        os.remove(repl.filename)  # Cleans up the tmp output file.

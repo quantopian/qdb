@@ -12,7 +12,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import os
 import socket
 from struct import pack
 
@@ -143,17 +142,15 @@ class QdbTracerServer(StreamServer):
             log.info('Assigning stream from (%s, %d) to session %s'
                      % (addr[0], addr[1], uuid))
 
-            if not self.session_store.attach_tracer(uuid, conn):
+            if not self.session_store.attach_tracer(
+                    uuid,
+                    conn,
+                    local_pid,
+                    pause_signal
+            ):
                 return  # No browser so the attach failed.
 
             for event in get_events_from_socket(conn):
-                log.error(event)
-                # If the tracer is running local to the server, we can avoid
-                # starting a reader process to raise the pause signal in the
-                # tracer, This event should not get passed along.
-                if local_pid and event['e'] == 'pause':
-                    os.kill(local_pid, pause_signal)
-                    continue
                 # Send the serialized event back to the browser.
                 self.session_store.send_to_clients(uuid, event=event)
         except socket.error:

@@ -18,6 +18,7 @@ patch_all()
 from collections import namedtuple
 import errno
 import json
+import os
 from struct import pack
 from time import time
 
@@ -42,6 +43,8 @@ log = Logger('QdbSessionStore')
 
 
 class DebuggingSession(namedtuple('DebuggingSessionBase', ['tracer',
+                                                           'local_pid',
+                                                           'pause_signal',
                                                            'clients',
                                                            'both_sides_event',
                                                            'timestamp'])):
@@ -52,6 +55,8 @@ class DebuggingSession(namedtuple('DebuggingSessionBase', ['tracer',
     """
     def __new__(cls,
                 tracer=None,
+                local_pid=None,
+                pause_signal=None,
                 clients=None,
                 both_sides_event=None,
                 timestamp=None):
@@ -59,7 +64,13 @@ class DebuggingSession(namedtuple('DebuggingSessionBase', ['tracer',
         both_sides_event = both_sides_event or Event()
         timestamp = timestamp or time()
         self = super(DebuggingSession, cls).__new__(
-            cls, tracer, clients, both_sides_event, timestamp
+            cls,
+            tracer,
+            local_pid,
+            pause_signal,
+            clients,
+            both_sides_event,
+            timestamp,
         )
         return self
 
@@ -71,7 +82,7 @@ class DebuggingSession(namedtuple('DebuggingSessionBase', ['tracer',
         """
         return self._replace(timestamp=time())
 
-    def attach_tracer(self, tracer):
+    def attach_tracer(self, tracer, local_pid, pause_signal):
         """
         Attaches a tracer to this session.
         Also internally checks if any clients are waiting on this tracer and
@@ -79,7 +90,11 @@ class DebuggingSession(namedtuple('DebuggingSessionBase', ['tracer',
         """
         if self.clients:
             self.both_sides_event.set()
-        return self._replace(tracer=tracer)
+        return self._replace(
+            tracer=tracer,
+            local_pid=local_pid,
+            pause_signal=pause_signal,
+        )
 
     def attach_client(self, client):
         """
@@ -189,7 +204,7 @@ class SessionStore(object):
             self._gc_glet.kill(timeout=5)
         self.slaughter_all(self.timeout_disable_mode)
 
-    def attach_tracer(self, uuid, socket):
+    def attach_tracer(self, uuid, socket, local_pid, pause_signal):
         """
         Attaches the tracer for uuid at the socket.
         This call waits for at least one client to come.
@@ -202,11 +217,16 @@ class SessionStore(object):
         else:
             session = DebuggingSession()
 
-        self._sessions[uuid] = session.attach_tracer(socket)
+        self._sessions[uuid] = session.attach_tracer(
+            socket,
+            local_pid,
+            pause_signal
+        )
         # Wait for the client if needed.
         if self.attach_timeout == 0:
-            log.info('Attached %stracer for session %s'
-                     % ('' if self._sessions[uuid].clients else 'orphaned ',
+            log.info('Attached %s%stracer for session %s'
+                     % ('local ' if local_pid else '',
+                        '' if self._sessions[uuid].clients else 'orphaned ',
                         uuid))
             return True
         if not self._sessions[uuid].both_sides_event.wait(self.attach_timeout):
@@ -261,6 +281,32 @@ class SessionStore(object):
         """
         sck.sendall(pack('>i', len(msg)))
         sck.sendall(msg)
+
+    def is_local(self, uuid):
+        """
+        Returns True iff session uuid is local.
+        """
+        return uuid in self._sessions and self._sessions[uuid].local_pid
+
+    def pause_tracer(self, uuid):
+        """
+        Raises the pause_signal in the tracer marked by uuid.
+        Returns True iff pausing was successful.
+        """
+        session = self._sessions.get(uuid)
+        if not session:
+            log.warn('Attempted to pause non-existing session %s' % uuid)
+            return False
+
+        if not session.local_pid:
+            log.warn('Attempted to pause non-local session %s' % uuid)
+            return False
+
+        try:
+            os.kill(session.local_pid, session.pause_signal)
+            return True
+        except OSError:
+            return False
 
     def send_to_tracer(self, uuid, msg=None, event=None):
         """

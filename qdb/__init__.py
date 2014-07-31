@@ -19,6 +19,12 @@ import sys
 
 from qdb.tracer import Qdb
 
+# Populate the namespace with command managers for the user.
+from qdb.comm import (  # NOQA
+    RemoteCommandManager,
+    ServerLocalCommandManager,
+)
+
 # Populate the namespace with potentially user facing errors. This allows the
 # user to more easily import them to catch.
 from qdb.errors import (  # NOQA

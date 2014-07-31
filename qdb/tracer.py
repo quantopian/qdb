@@ -28,14 +28,22 @@ from logbook import Logger
 from qdb.comm import RemoteCommandManager, fmt_msg
 from qdb.errors import QdbUnreachableBreakpoint, QdbQuit
 
+try:
+    import cPickle as pickle
+except ImportError:
+    import pickle
+
 log = Logger('Qdb')
 
 
-def default_eval_fn(src, stackframe, mode='eval'):
+def default_eval_fn(src, stackframe, mode='eval', exec_=False):
     """
     Wrapper around vanilla eval with no safety.
     """
     code = compile(src, '<string>', mode)
+    if exec_:
+        exec(code, stackframe.f_globals, stackframe.f_locals)
+        return
     return eval(code, stackframe.f_globals, stackframe.f_locals)
 
 
@@ -117,7 +125,7 @@ class Qdb(Bdb, object):
         # program. We hold a handle to this in case the program resets stdout.
         if self.redirect_stdout:
             self.stdout = StringIO()
-            self.stdout_ptr = self.stdout.tell()
+            self.stdout_ptr = 0
             sys.stdout = self.stdout
         self.forget()
         if not cmd_manager:
@@ -244,7 +252,7 @@ class Qdb(Bdb, object):
         Adds every arg to the watchlist and updates.
         """
         for expr in args:
-            self.watchlist[expr] = ''
+            self.watchlist[expr] = (False, '')
 
         self.update_watchlist()
 
@@ -255,9 +263,11 @@ class Qdb(Bdb, object):
         """
         for expr in self.watchlist:
             try:
-                self.watchlist[expr] = self.eval_fn(expr, self.curframe)
+                self.watchlist[expr] = (False,
+                                        self.eval_fn(expr, self.curframe))
             except Exception as e:
-                self.watchlist[expr] = self.exception_serializer(e)
+                self.watchlist[expr] = (True,
+                                        self.exception_serializer(e))
 
     def effective(self, file, line, stackframe):
         """
@@ -368,7 +378,7 @@ class Qdb(Bdb, object):
         self.cmd_manager.send_watchlist()
         self.cmd_manager.send_stdout()
         self.cmd_manager.send_stack()
-        msg = fmt_msg('return', str(return_value))
+        msg = fmt_msg('return', str(return_value), serial=pickle.dumps)
         self.cmd_manager.next_command(msg)
 
     def user_exception(self, stackframe, exc_info):

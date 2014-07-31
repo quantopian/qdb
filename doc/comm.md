@@ -54,6 +54,8 @@ payload that this command requires.
 - `set_break, BreakpointDict`<sup>`1`</sup>
 - `clear_break, BreakpointDict`
 - `list, ListDict`<sup>`2`</sup>
+- `up, None`
+- `down, None`
 - `start, None`
 - `disable, String`<sup>`3`</sup>
 
@@ -66,7 +68,7 @@ current frame everytime control is given back to the user.
 
 
     {
-        'file': String or None,  # This is the filename, None = ALGO_FILENAME
+        'file': String or None,  # This is the filename, None = default_file
         'line': Int,  # The line number
         'temp': Bool or None,  # Is this temporary (defaults to False)
         'cond': String or None,  # The string to evaluate for this breakpoint
@@ -87,7 +89,7 @@ Just like the frames, omitting a field is the same as setting it to `None`.
     }
 
 This will return back a `list` message that returns a slice of the file
-named in the `file` field or ALGO_FILENAME if that field is `None`.
+named in the `file` field or `default_file` if that field is `None`.
 `None` for start means `start` at line 1, and `None` for `end` means to go until
 the end of the file.
 
@@ -105,7 +107,7 @@ any time.
 
 - `error, ErrorDict`<sup>`0`</sup>
 - `breakpoints, [BreakpointDict]`<sup>`1`</sup>
-- `stack, [Stackframe]`<sup>`2`</sup>
+- `stack, StackDict`<sup>`2`</sup>
 - `watchlist, [WatchedExpr]`<sup>`3`</sup>
 - `print, PrintDict`<sup>`4`</sup>
 - `list, String` - The response to the `list` command.
@@ -130,7 +132,16 @@ stop here and this message will be sent.
 
 `1`: This is an array of the same `BreakpointDict` as before.
 
-`2`: This is an array of `StackFrame`s that are formatted as such:
+`2`: This is a  dictionary looking like:
+
+    {
+        'index': Int,  # The current frame we are in for evaluation.
+        'stack': [StackFrame],  # An array of StackFrame dicts.
+    }
+
+The `index` field is the current frame for evaluation. This is used when
+we are moving up and down the stack.
+The `stack` field is an array of `StackFrame`s that are formatted as such:
 
     {
         'file': String,  # The filename.
@@ -140,30 +151,37 @@ stop here and this message will be sent.
     }
 
 The stack is ordered in the array where `stack[0]` is the top frame, and
-`stack[-1]` is the frame we are currently in. To retrieve the current line
-number you are on, use `stack[-1]['line']`
+`stack[-1]` is the newest frame. To retrieve the current line
+number you are on, use `stack[index]['line']` where `index` is from the
+stack payload.
 
 
 `3`: This is an array of `WatchedExpr`s that are formatted as such:
 
     {
         'expr': String,
-        'value': String,
+        'exc': Bool,
+        'value': String
     }
 
 where `expr` is the expression you set to watch, and `value` is the result
-from evaluating the expression in the current frame. Exceptions will be
-converted into a string representation.
+from evaluating the expression in the current frame. The `exc` denotes if an
+exception was raised when evaluating `expr`. If the `Bool` is `True`, then the
+`String` will be the result of `tracer.exception_serializer(e)` where `e` is
+the exception. If the `Bool` is `False`, then the `String` will be the result
+cast to a string.
 
 
 `4`: This format of the `PrintDict` is as such:
 
     {
         'input': String,
+        'exc': Bool,
         'output': String,
     }
 
 Where `input` is the input that prompted this print statement, and `output` is
-the result. If the tracer is set to forward stdout, frames will be sent with an
-input of `<stdout>`. The reason that `input` is reported is that it allows users
-to show eachother the output of repl commands.
+the result. The `exc` + `output` fields follow the same format as the `exc` +
+`value` fields of `Watchedexpr` If the tracer is set to forward stdout, frames
+will be sent with an input of `<stdout>`. The reason that `input` is reported
+is that it allows users to show eachother the output of repl commands.

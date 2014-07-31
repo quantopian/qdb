@@ -372,37 +372,39 @@ class TracerTester(TestCase):
             This changes the curframe of the tracer to eval the watchlist with
             a new set of locals.
             """
-            self.assertEqual(db.watchlist['2 + 2'], 4)
+            self.assertEqual(db.watchlist['2 + 2'], (False, 4))
             self.assertEqual(
                 db.watchlist['local_var'],
-                "NameError: name 'local_var' is not defined"
+                (True, "NameError: name 'local_var' is not defined")
             )
             self.assertEqual(
                 db.watchlist['local_fn()'],
-                "NameError: name 'local_fn' is not defined"
+                (True, "NameError: name 'local_fn' is not defined")
             )
-            self.assertEqual(db.watchlist['global_var'], 'global_var')
-            self.assertEqual(db.watchlist['global_fn()'], 'global_fn')
+            self.assertEqual(db.watchlist['global_var'], (False, 'global_var'))
+            self.assertEqual(db.watchlist['global_fn()'], (False, 'global_fn'))
 
         local_var = 'local_var'  # NOQA
         local_fn = lambda: 'local_fn'  # NOQA
 
         # Set trace and check innitial assertions.
         db.set_trace()
-        self.assertEqual(db.watchlist['2 + 2'], 4)
-        self.assertEqual(db.watchlist['local_var'], 'local_var')
-        self.assertEqual(db.watchlist['local_fn()'], 'local_fn')
-        self.assertEqual(db.watchlist['global_var'], 'global_var')
-        self.assertEqual(db.watchlist['global_fn()'], 'global_fn')
+        self.assertEqual(db.watchlist['2 + 2'], (False, 4))
+        self.assertEqual(db.watchlist['local_var'], (False, 'local_var'))
+        self.assertEqual(db.watchlist['local_fn()'], (False, 'local_fn'))
+        self.assertEqual(db.watchlist['global_var'], (False, 'global_var'))
+        self.assertEqual(db.watchlist['global_fn()'], (False, 'global_fn'))
 
         local_var = 'updated_local_var'  # NOQA
         local_fn = lambda: 'updated_local_fn'  # NOQA
 
-        self.assertEqual(db.watchlist['2 + 2'], 4)
-        self.assertEqual(db.watchlist['local_var'], 'updated_local_var')
-        self.assertEqual(db.watchlist['local_fn()'], 'updated_local_fn')
-        self.assertEqual(db.watchlist['global_var'], 'global_var')
-        self.assertEqual(db.watchlist['global_fn()'], 'global_fn')
+        self.assertEqual(db.watchlist['2 + 2'], (False, 4))
+        self.assertEqual(db.watchlist['local_var'], (False,
+                                                     'updated_local_var'))
+        self.assertEqual(db.watchlist['local_fn()'], (False,
+                                                      'updated_local_fn'))
+        self.assertEqual(db.watchlist['global_var'], (False, 'global_var'))
+        self.assertEqual(db.watchlist['global_fn()'], (False, 'global_fn'))
 
         new_curframe()
 
