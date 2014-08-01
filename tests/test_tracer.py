@@ -478,3 +478,55 @@ class TracerTester(TestCase):
             continued = True
 
         self.assertTrue(continued)
+
+    def test_redirect_stdout(self):
+        """
+        Tests that stdout is stored on the tracer.
+        """
+        db = Qdb(cmd_manager=NopCommandManager)
+
+        data_to_write = 'stdout'
+        db.set_trace(stop=False)
+
+        print data_to_write,  # Write some data to stdout.
+
+        db.disable()
+        self.assertEqual(db.stdout.getvalue(), data_to_write)
+
+    def test_redirect_stderr(self):
+        """
+        Tests that stderr is stored on the tracer.
+        """
+        db = Qdb(cmd_manager=NopCommandManager)
+
+        data_to_write = 'stderr'
+        db.set_trace(stop=False)
+
+        print >> sys.stderr, data_to_write,  # Write some data to stderr.
+
+        db.disable()
+        self.assertEqual(db.stderr.getvalue(), data_to_write)
+
+    def test_clear_output_buffers(self):
+        """
+        Tests that we can clear the output buffers to free up some memory.
+        """
+
+        db = Qdb(cmd_manager=NopCommandManager)
+        stdout_data, stderr_data = 'stdout', 'stderr'
+        db.set_trace(stop=False)
+
+        print stdout_data,
+        print >> sys.stderr, stderr_data,
+
+        db.disable()
+
+        # Assert that the data actually got written.
+        self.assertEqual(db.stdout.getvalue(), stdout_data)
+        self.assertEqual(db.stderr.getvalue(), stderr_data)
+
+        db.clear_output_buffers()
+
+        # Assert that the data actually got cleared.
+        self.assertEqual(db.stdout.getvalue(), '')
+        self.assertEqual(db.stderr.getvalue(), '')

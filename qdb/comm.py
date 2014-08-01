@@ -51,7 +51,12 @@ log = Logger('Qdb')
 def capture_output():
     """
     Captures stdout and stderr for the duration of the body.
+    example
+    with capture_output() as (out, err):
+        print 'hello'
     """
+    old_stdout = sys.stdout
+    old_stderr = sys.stderr
     sys.stdout = StringIO()
     sys.stderr = StringIO()
     try:
@@ -59,8 +64,8 @@ def capture_output():
     finally:
         sys.stdout.close()
         sys.stderr.close()
-        sys.stdout = sys.__stdout__
-        sys.stderr = sys.__stderr__
+        sys.stdout = old_stdout
+        sys.stderr = old_stderr
 
 
 def fmt_msg(event, payload=None, serial=None):
@@ -176,17 +181,17 @@ class CommandManager(object):
             }
         )
 
-    def send_stdout(self):
+    def send_output(self):
         """
         Sends a print that denotes that this is coming from the process.
         This function is a nop if the tracer is not set to redirect the
         stdout and stderr to the client.
         """
-        if self.tracer.redirect_stdout:
-            self.tracer.stdout.seek(self.tracer.stdout_ptr)
-            out = self.tracer.stdout.read()
-            self.tracer.stdout_ptr += len(out)
-            self.send_print('<stdout>', False, out)
+        if self.tracer.redirect_output:
+            self.send_print('<stdout>', False, self.tracer.stdout.getvalue())
+            self.send_print('<stderr>', False, self.tracer.stderr.getvalue())
+            # We don't need to cache this anymore.
+            self.tracer.clear_output_buffers()
 
     def send_error(self, error_type, error_data):
         """
@@ -466,7 +471,7 @@ class RemoteCommandManager(CommandManager):
             else:
                 out_msg = out.getvalue()[:-1] if out.getvalue() \
                     and out.getvalue()[-1] == '\n' else out.getvalue()
-                self.send_print(payload, out_msg)
+                self.send_print(payload, False, out_msg)
 
         self.tracer.update_watchlist()
         self.send_watchlist()
@@ -634,7 +639,7 @@ class RemoteCommandManager(CommandManager):
         Sends back initial information and defers to user control.
         """
         self.send_breakpoints()
-        self.send_stdout()
+        self.send_output()
         self.send_watchlist()
         self.send_stack()
         self.next_command()

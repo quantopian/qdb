@@ -17,10 +17,16 @@ import signal
 import sys
 from unittest import TestCase
 
+try:
+    import cPickle as pickle
+except ImportError:
+    import pickle
+
 from gevent import Timeout, sleep
 from mock import MagicMock
 from nose_parameterized import parameterized
 
+from qdb import Qdb
 from qdb.comm import RemoteCommandManager, ServerLocalCommandManager, fmt_msg
 from qdb.errors import (
     QdbFailedToConnect,
@@ -211,18 +217,77 @@ class RemoteCommandManagerTester(TestCase):
 
     def test_pause(self):
         """
-        Asserts that sending a pause to the process will pause us.
+        Asserts that sending a pause to the process will raise the pause signal
+        in the tracer process.
         """
-        tracer = self.MockTracer()
-        cmd_manager = self.cmd_manager(tracer)
-        tracer.cmd_manager = cmd_manager
-        cmd_manager.start('')
+        pause_called = [False]
+
+        def pause_handler(signal, stackframe):
+            """
+            Pause handler that marks that we made it into this function.
+            """
+            pause_called[0] = True
+
+        db = Qdb(
+            cmd_manager=self.cmd_manager,
+            host=self.tracer_host,
+            port=self.tracer_port,
+        )
+        signal.signal(db.pause_signal, pause_handler)
         self.server.session_store.send_to_tracer(
-            uuid='mock',
+            uuid=db.uuid,
             event=fmt_msg('pause')
         )
-        # Pausing should call set_step internally.
-        tracer.set_step.assert_called()
+
+        self.assertTrue(pause_called)
+
+    @parameterized.expand([
+        ('2 + 2', False, '4'),
+        ('print "test"', False, 'test'),
+        ('ValueError("test")', False, "ValueError('test',)"),
+        ('raise ValueError("test")', True, 'ValueError: test'),
+        ('[][10]', True, 'IndexError: list index out of range'),
+        ('{}["test"]', True, "KeyError: 'test'"),
+    ])
+    def test_eval_results(self, input_, exc, output):
+        """
+        Tests that evaling code returns the proper results.
+        """
+        prints = []
+
+        class cmd_manager(self.cmd_manager):
+            def send_print(self, input_, exc, output):
+                prints.append({
+                    'input': input_,
+                    'exc': exc,
+                    'output': output
+                })
+
+        db = Qdb(
+            uuid='eval_test',
+            cmd_manager=cmd_manager,
+            host=self.tracer_host,
+            port=self.tracer_port,
+            redirect_output=False,
+        )
+        sleep(0.01)
+        self.server.session_store.send_to_tracer(
+            uuid=db.uuid,
+            event=fmt_msg('eval', input_)
+        )
+        self.server.session_store.send_to_tracer(
+            uuid=db.uuid,
+            event=fmt_msg('continue')
+        )
+        db.set_trace(stop=True)
+        self.server.session_store.slaughter(db.uuid)
+
+        self.assertTrue(prints)
+        print_ = prints[0]
+
+        self.assertEqual(print_['input'], input_)
+        self.assertEqual(print_['exc'], exc)
+        self.assertEqual(print_['output'], output)
 
 
 class ServerLocalCommandManagerTester(RemoteCommandManagerTester):
