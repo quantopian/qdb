@@ -17,11 +17,6 @@ import signal
 import sys
 from unittest import TestCase
 
-try:
-    import cPickle as pickle
-except ImportError:
-    import pickle
-
 from gevent import Timeout, sleep
 from mock import MagicMock
 from nose_parameterized import parameterized
@@ -288,6 +283,34 @@ class RemoteCommandManagerTester(TestCase):
         self.assertEqual(print_['input'], input_)
         self.assertEqual(print_['exc'], exc)
         self.assertEqual(print_['output'], output)
+
+    def test_eval_state_update(self):
+        """
+        Tests that eval may update the state of the program.
+        """
+        # We will try to corrupt this variable with a stateful operation.
+        test_var = 'pure'  # NOQA
+
+        db = Qdb(
+            uuid='eval_test',
+            cmd_manager=self.cmd_manager,
+            host=self.tracer_host,
+            port=self.tracer_port,
+            redirect_output=False,
+        )
+        sleep(0.01)
+        self.server.session_store.send_to_tracer(
+            uuid=db.uuid,
+            event=fmt_msg('eval', "test_var = 'mutated'")
+        )
+        self.server.session_store.send_to_tracer(
+            uuid=db.uuid,
+            event=fmt_msg('continue')
+        )
+        db.set_trace(stop=True)
+        self.server.session_store.slaughter(db.uuid)
+
+        self.assertEqual(test_var, 'mutated')
 
 
 class ServerLocalCommandManagerTester(RemoteCommandManagerTester):
