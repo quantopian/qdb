@@ -158,9 +158,6 @@ class QdbClientServer(object):
 
             self.session_store.send_to_tracer(uuid, event=start_event)
             for event in self.get_events(ws):
-                if event['e'] == 'pause' and self.session_store.is_local(uuid):
-                    self.session_store.pause_tracer(uuid)
-                    continue
                 self.session_store.send_to_tracer(uuid, event=event)
 
         finally:
