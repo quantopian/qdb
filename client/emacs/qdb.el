@@ -42,6 +42,10 @@
     "unt" "until"
     "w" "watch"
     "unw" "unwatch"
+    "u" "up"
+    "d" "down"
+    "p" "pause"
+    "locals"
     "tbreak"))
 
 (defvar qdb-font-lock-keywords

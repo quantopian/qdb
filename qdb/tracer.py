@@ -28,14 +28,22 @@ from logbook import Logger
 from qdb.comm import RemoteCommandManager, fmt_msg
 from qdb.errors import QdbUnreachableBreakpoint, QdbQuit
 
+try:
+    import cPickle as pickle
+except ImportError:
+    import pickle
+
 log = Logger('Qdb')
 
 
-def default_eval_fn(src, stackframe, mode='eval'):
+def default_eval_fn(src, stackframe, mode='eval', exec_=False):
     """
     Wrapper around vanilla eval with no safety.
     """
     code = compile(src, '<string>', mode)
+    if exec_:
+        exec(code, stackframe.f_globals, stackframe.f_locals)
+        return
     return eval(code, stackframe.f_globals, stackframe.f_locals)
 
 
@@ -70,7 +78,7 @@ class Qdb(Bdb, object):
                  exception_serializer=None,
                  skip_fn=None,
                  pause_signal=None,
-                 redirect_stdout=True,
+                 redirect_output=True,
                  retry_attepts=10,
                  uuid=None,
                  cmd_manager=None):
@@ -107,7 +115,7 @@ class Qdb(Bdb, object):
             default_exception_serializer
         self.eval_fn = eval_fn or default_eval_fn
         self._file_cache = {}
-        self.redirect_stdout = redirect_stdout
+        self.redirect_output = redirect_output
         self.retry_attepts = retry_attepts
         self.skip_fn = skip_fn or (lambda _: False)
         self.pause_signal = pause_signal if pause_signal else signal.SIGUSR2
@@ -115,15 +123,27 @@ class Qdb(Bdb, object):
         self.watchlist = {}
         # We need to be able to send stdout back to the user debugging the
         # program. We hold a handle to this in case the program resets stdout.
-        if self.redirect_stdout:
+        if self.redirect_output:
             self.stdout = StringIO()
-            self.stdout_ptr = self.stdout.tell()
+            self.stderr = StringIO()
             sys.stdout = self.stdout
+            sys.stderr = self.stderr
         self.forget()
         if not cmd_manager:
             cmd_manager = RemoteCommandManager
         self.cmd_manager = cmd_manager(self)
         self.cmd_manager.start(auth_msg)
+
+    def clear_output_buffers(self):
+        """
+        Clears the output buffers.
+        """
+        self.stdout.close()
+        self.stderr.close()
+        self.stdout = StringIO()
+        self.stderr = StringIO()
+        sys.stdout = self.stdout
+        sys.stderr = self.stderr
 
     def set_default_file(self, filename):
         """
@@ -244,7 +264,7 @@ class Qdb(Bdb, object):
         Adds every arg to the watchlist and updates.
         """
         for expr in args:
-            self.watchlist[expr] = ''
+            self.watchlist[expr] = (False, '')
 
         self.update_watchlist()
 
@@ -255,9 +275,11 @@ class Qdb(Bdb, object):
         """
         for expr in self.watchlist:
             try:
-                self.watchlist[expr] = self.eval_fn(expr, self.curframe)
+                self.watchlist[expr] = (False,
+                                        self.eval_fn(expr, self.curframe))
             except Exception as e:
-                self.watchlist[expr] = self.exception_serializer(e)
+                self.watchlist[expr] = (True,
+                                        self.exception_serializer(e))
 
     def effective(self, file, line, stackframe):
         """
@@ -358,7 +380,7 @@ class Qdb(Bdb, object):
     def user_line(self, stackframe):
         self.setup_stack(stackframe, None)
         self.cmd_manager.send_watchlist()
-        self.cmd_manager.send_stdout()
+        self.cmd_manager.send_output()
         self.cmd_manager.send_stack()
         self.cmd_manager.next_command()
 
@@ -366,9 +388,9 @@ class Qdb(Bdb, object):
         stackframe.f_locals['__return__'] = return_value
         self.setup_stack(stackframe, None)
         self.cmd_manager.send_watchlist()
-        self.cmd_manager.send_stdout()
+        self.cmd_manager.send_output()
         self.cmd_manager.send_stack()
-        msg = fmt_msg('return', str(return_value))
+        msg = fmt_msg('return', str(return_value), serial=pickle.dumps)
         self.cmd_manager.next_command(msg)
 
     def user_exception(self, stackframe, exc_info):
@@ -376,7 +398,7 @@ class Qdb(Bdb, object):
         stackframe.f_locals['__exception__'] = exc_type, exc_value
         self.setup_stack(stackframe, exc_traceback)
         self.cmd_manager.send_watchlist()
-        self.cmd_manager.send_stdout()
+        self.cmd_manager.send_output()
         self.cmd_manager.send_stack()
         msg = fmt_msg('exception', {
             'type': str(exc_type),

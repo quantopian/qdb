@@ -12,23 +12,22 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from contextlib import contextmanager
-import json
+from functools import partial
 import signal
+import sys
 from unittest import TestCase
 
-from gevent import Timeout
-from mock import Mock
+from gevent import Timeout, sleep
+from mock import MagicMock
 from nose_parameterized import parameterized
-from websocket import create_connection
 
+from qdb import Qdb
 from qdb.comm import RemoteCommandManager, ServerLocalCommandManager, fmt_msg
 from qdb.errors import (
     QdbFailedToConnect,
     QdbAuthenticationError,
 )
 from qdb.server import QdbServer
-from qdb.server.client import DEFAULT_ROUTE_FMT
 
 from tests import fix_filename
 
@@ -49,6 +48,7 @@ class RemoteCommandManagerTester(TestCase):
             client_host=cls.client_host,
             client_port=cls.client_port,
             tracer_auth_fn=lambda a: a != cls.bad_auth_msg,
+            attach_timeout=0,
         )
         cls.server.start()
         cls.cmd_manager = RemoteCommandManager
@@ -64,35 +64,16 @@ class RemoteCommandManagerTester(TestCase):
         """
         Construct a mock tracer.
         """
-        tracer = Mock()
+        tracer = MagicMock()
         tracer.address = self.tracer_host, self.tracer_port
         tracer.pause_signal = signal.SIGUSR2
         tracer.retry_attepts = 1
         tracer.local = 0, 0
         tracer.uuid = 'mock'
         tracer.watchlist = {}
-        tracer.stack = []
+        tracer.curframe = sys._getframe()
+        tracer.stack = [(sys._getframe(), 1)] * 3
         return tracer
-
-    @contextmanager
-    def connect_client(self, uuid='mock'):
-        """
-        Connects a fake client that auths with the server. This is used to put
-        the session in the session store.
-        """
-        ws = None
-        try:
-            ws = create_connection(
-                ('ws://%s:%s' % (self.client_host, self.client_port))
-                + DEFAULT_ROUTE_FMT.format(uuid=uuid)
-            )
-            ws.send(fmt_msg('start', '', serial=json.dumps))
-            while uuid not in self.server.session_store:
-                pass
-            yield ws
-        finally:
-            if ws:
-                ws.close()
 
     def test_connect(self):
         """
@@ -141,7 +122,7 @@ class RemoteCommandManagerTester(TestCase):
         (lambda t: t.disable, 'disable', 'hard'),
         (lambda t: t.disable, 'disable', 'soft'),
     ])
-    def test_commands(self, attrgetter, event, payload=None):
+    def test_commands(self, attrgetter_, event, payload=None):
         """
         Tests various commands with or without payloads.
         """
@@ -149,34 +130,187 @@ class RemoteCommandManagerTester(TestCase):
         cmd_manager = self.cmd_manager(tracer)
         tracer.cmd_manager = cmd_manager
         cmd_manager.start('')
-        with self.connect_client():
-            self.server.session_store.send_to_tracer(
-                uuid=tracer.uuid,
-                event=fmt_msg(event, payload)
-            )
-            with Timeout(0.1, False):
-                cmd_manager.next_command()
-            tracer.start.assert_called()  # Start always gets called.
-            attrgetter(tracer).assert_called()
-
+        self.server.session_store.send_to_tracer(
+            uuid=tracer.uuid,
+            event=fmt_msg(event, payload)
+        )
+        with Timeout(0.1, False):
+            cmd_manager.next_command()
+        tracer.start.assert_called()  # Start always gets called.
+        attrgetter_(tracer).assert_called()
         # Kill the session we just created
+        self.server.session_store.slaughter(tracer.uuid)
+
+    def test_locals(self):
+        """
+        Tests accessing the locals.
+        """
+        command_locals_called = [False]
+
+        def test_command_locals(cmd_manager, payload):
+            command_locals_called[0] = True
+            self.cmd_manager.command_locals(cmd_manager, payload)
+
+        tracer = self.MockTracer()
+        tracer.curframe_locals = {'a': 'a'}
+        cmd_manager = self.cmd_manager(tracer)
+        cmd_manager.command_locals = partial(test_command_locals, cmd_manager)
+        tracer.cmd_manager = cmd_manager
+        cmd_manager.start('')
+        sleep(0.01)
+        self.server.session_store.send_to_tracer(
+            uuid=tracer.uuid,
+            event=fmt_msg('locals')
+        )
+
+        with Timeout(0.1, False):
+            cmd_manager.next_command()
+        self.assertTrue(command_locals_called[0])
+
+        tracer.start.assert_called()  # Start always gets called.
+        self.server.session_store.slaughter(tracer.uuid)
+
+    def test_up(self):
+        """
+        Tests moving up the stack.
+        """
+        tracer = self.MockTracer()
+        tracer.curindex = 1
+        cmd_manager = self.cmd_manager(tracer)
+        tracer.cmd_manager = cmd_manager
+        cmd_manager.start('')
+        sleep(0.01)
+        self.server.session_store.send_to_tracer(
+            uuid=tracer.uuid,
+            event=fmt_msg('up')
+        )
+        with Timeout(0.1, False):
+            cmd_manager.next_command()
+        tracer.start.assert_called()  # Start always gets called.
+        self.assertEqual(tracer.curindex, 0)  # Did we move up?
+        self.server.session_store.slaughter(tracer.uuid)
+
+    def test_down(self):
+        """
+        Tests moving downx the stack.
+        """
+        tracer = self.MockTracer()
+        tracer.curindex = 1
+        cmd_manager = self.cmd_manager(tracer)
+        tracer.cmd_manager = cmd_manager
+        cmd_manager.start('')
+        sleep(0.01)
+        self.server.session_store.send_to_tracer(
+            uuid=tracer.uuid,
+            event=fmt_msg('down')
+        )
+        with Timeout(0.1, False):
+            cmd_manager.next_command()
+        tracer.start.assert_called()  # Start always gets called.
+        self.assertEqual(tracer.curindex, 2)  # Did we move up?
         self.server.session_store.slaughter(tracer.uuid)
 
     def test_pause(self):
         """
-        Asserts that sending a pause to the process will pause us.
+        Asserts that sending a pause to the process will raise the pause signal
+        in the tracer process.
         """
-        tracer = self.MockTracer()
-        cmd_manager = self.cmd_manager(tracer)
-        tracer.cmd_manager = cmd_manager
-        cmd_manager.start('')
-        with self.connect_client():
-            self.server.session_store.send_to_tracer(
-                uuid='mock',
-                event=fmt_msg('pause')
-            )
-            # Pausing should call set_step internally.
-            tracer.set_step.assert_called()
+        pause_called = [False]
+
+        def pause_handler(signal, stackframe):
+            """
+            Pause handler that marks that we made it into this function.
+            """
+            pause_called[0] = True
+
+        db = Qdb(
+            cmd_manager=self.cmd_manager,
+            host=self.tracer_host,
+            port=self.tracer_port,
+        )
+        signal.signal(db.pause_signal, pause_handler)
+        self.server.session_store.send_to_tracer(
+            uuid=db.uuid,
+            event=fmt_msg('pause')
+        )
+
+        self.assertTrue(pause_called)
+
+    @parameterized.expand([
+        ('2 + 2', False, '4'),
+        ('print "test"', False, 'test'),
+        ('ValueError("test")', False, "ValueError('test',)"),
+        ('raise ValueError("test")', True, 'ValueError: test'),
+        ('[][10]', True, 'IndexError: list index out of range'),
+        ('{}["test"]', True, "KeyError: 'test'"),
+    ])
+    def test_eval_results(self, input_, exc, output):
+        """
+        Tests that evaling code returns the proper results.
+        """
+        prints = []
+
+        class cmd_manager(self.cmd_manager):
+            def send_print(self, input_, exc, output):
+                prints.append({
+                    'input': input_,
+                    'exc': exc,
+                    'output': output
+                })
+
+        db = Qdb(
+            uuid='eval_test',
+            cmd_manager=cmd_manager,
+            host=self.tracer_host,
+            port=self.tracer_port,
+            redirect_output=False,
+        )
+        sleep(0.01)
+        self.server.session_store.send_to_tracer(
+            uuid=db.uuid,
+            event=fmt_msg('eval', input_)
+        )
+        self.server.session_store.send_to_tracer(
+            uuid=db.uuid,
+            event=fmt_msg('continue')
+        )
+        db.set_trace(stop=True)
+        self.server.session_store.slaughter(db.uuid)
+
+        self.assertTrue(prints)
+        print_ = prints[0]
+
+        self.assertEqual(print_['input'], input_)
+        self.assertEqual(print_['exc'], exc)
+        self.assertEqual(print_['output'], output)
+
+    def test_eval_state_update(self):
+        """
+        Tests that eval may update the state of the program.
+        """
+        # We will try to corrupt this variable with a stateful operation.
+        test_var = 'pure'  # NOQA
+
+        db = Qdb(
+            uuid='eval_test',
+            cmd_manager=self.cmd_manager,
+            host=self.tracer_host,
+            port=self.tracer_port,
+            redirect_output=False,
+        )
+        sleep(0.01)
+        self.server.session_store.send_to_tracer(
+            uuid=db.uuid,
+            event=fmt_msg('eval', "test_var = 'mutated'")
+        )
+        self.server.session_store.send_to_tracer(
+            uuid=db.uuid,
+            event=fmt_msg('continue')
+        )
+        db.set_trace(stop=True)
+        self.server.session_store.slaughter(db.uuid)
+
+        self.assertEqual(test_var, 'mutated')
 
 
 class ServerLocalCommandManagerTester(RemoteCommandManagerTester):
@@ -192,6 +326,7 @@ class ServerLocalCommandManagerTester(RemoteCommandManagerTester):
             client_host=cls.client_host,
             client_port=cls.client_port,
             tracer_auth_fn=lambda a: a != cls.bad_auth_msg,
+            attach_timeout=0,
         )
         cls.server.start()
         cls.cmd_manager = ServerLocalCommandManager

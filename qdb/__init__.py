@@ -19,6 +19,12 @@ import sys
 
 from qdb.tracer import Qdb
 
+# Populate the namespace with command managers for the user.
+from qdb.comm import (  # NOQA
+    RemoteCommandManager,
+    ServerLocalCommandManager,
+)
+
 # Populate the namespace with potentially user facing errors. This allows the
 # user to more easily import them to catch.
 from qdb.errors import (  # NOQA
@@ -40,7 +46,7 @@ def set_trace(host='localhost',
               exception_serializer=None,
               skip_fn=None,
               pause_signal=None,
-              redirect_stdout=True,
+              redirect_output=True,
               retry_attepts=10,
               uuid=None,
               cmd_manager=None,
@@ -59,7 +65,7 @@ def set_trace(host='localhost',
         exception_serializer=exception_serializer,
         skip_fn=skip_fn,
         pause_signal=pause_signal,
-        redirect_stdout=redirect_stdout,
+        redirect_output=redirect_output,
         retry_attepts=retry_attepts,
         uuid=uuid,
         cmd_manager=cmd_manager,

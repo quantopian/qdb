@@ -19,7 +19,6 @@ from contextlib import contextmanager
 import errno
 import os
 import signal
-from StringIO import StringIO
 from struct import pack, unpack
 import sys
 
@@ -36,6 +35,11 @@ from qdb.errors import (
 )
 
 try:
+    from cStringIO import StringIO
+except ImportError:
+    from StringIO import StringIO
+
+try:
     import cPickle as pickle
 except ImportError:
     import pickle
@@ -46,14 +50,22 @@ log = Logger('Qdb')
 @contextmanager
 def capture_output():
     """
-    Captures stdout for the duration of the body.
+    Captures stdout and stderr for the duration of the body.
+    example
+    with capture_output() as (out, err):
+        print 'hello'
     """
+    old_stdout = sys.stdout
+    old_stderr = sys.stderr
     sys.stdout = StringIO()
+    sys.stderr = StringIO()
     try:
-        yield sys.stdout
+        yield sys.stdout, sys.stderr
     finally:
         sys.stdout.close()
-        sys.stdout = sys.__stdout__
+        sys.stderr.close()
+        sys.stdout = old_stdout
+        sys.stderr = old_stderr
 
 
 def fmt_msg(event, payload=None, serial=None):
@@ -134,17 +146,18 @@ class CommandManager(object):
         """
         self.send_event(
             'watchlist',
-            [{'expr': k, 'value': v}
-             for k, v in self.tracer.watchlist.iteritems()],
+            [{'expr': k, 'exc': exc, 'value': val}
+             for k, (exc, val) in self.tracer.watchlist.iteritems()],
         )
 
-    def send_print(self, input, output):
+    def send_print(self, input, exc, output):
         """
         Sends the print event with the given input and output.
         """
         self.send(fmt_msg(
             'print', {
                 'input': input,
+                'exc': exc,
                 'output': output
             },
             serial=pickle.dumps)
@@ -158,25 +171,27 @@ class CommandManager(object):
         # tracer's skip_fn rules. We will also format each stackframe.
         self.send_event(
             'stack',
-            [self._fmt_stackframe(stackframe, line)
-             for stackframe, line in self.tracer.stack
-             if not
-             self.tracer.skip_fn(
-                 self.tracer.canonic(stackframe.f_code.co_filename)
-             )],
+            {
+                'index': self.tracer.curindex,
+                'stack': [self._fmt_stackframe(stackframe, line)
+                          for stackframe, line in self.tracer.stack
+                          if not self.tracer.skip_fn(
+                              self.tracer.canonic(
+                                  stackframe.f_code.co_filename))],
+            }
         )
 
-    def send_stdout(self):
+    def send_output(self):
         """
         Sends a print that denotes that this is coming from the process.
         This function is a nop if the tracer is not set to redirect the
-        stdout to the client.
+        stdout and stderr to the client.
         """
-        if self.tracer.redirect_stdout:
-            self.tracer.stdout.seek(self.tracer.stdout_ptr)
-            out = self.tracer.stdout.read()
-            self.tracer.stdout_ptr = self.tracer.stdout.tell()
-            self.send_print('<stdout>', out)
+        if self.tracer.redirect_output:
+            self.send_print('<stdout>', False, self.tracer.stdout.getvalue())
+            self.send_print('<stderr>', False, self.tracer.stderr.getvalue())
+            # We don't need to cache this anymore.
+            self.tracer.clear_output_buffers()
 
     def send_error(self, error_type, error_data):
         """
@@ -433,35 +448,50 @@ class RemoteCommandManager(CommandManager):
         self.tracer.set_continue()
 
     def command_eval(self, payload):
+        """
+        Evaluates and expression in self.tracer.curframe, reevaluates the
+        watchlist, and defers to user control.
+        """
         if not self.payload_check(payload, 'eval'):
             return self.next_command()
-        with capture_output() as out:
+        with capture_output() as (out, err):
             try:
                 self.tracer.eval_fn(
                     payload,
                     self.tracer.curframe,
-                    'single'
+                    'single',
+                    exec_=True,
                 )
             except Exception as e:
                 self.send_print(
                     payload,
+                    True,
                     self.tracer.exception_serializer(e)
                 )
             else:
                 out_msg = out.getvalue()[:-1] if out.getvalue() \
                     and out.getvalue()[-1] == '\n' else out.getvalue()
-                self.send_print(payload, out_msg)
+                self.send_print(payload, False, out_msg)
 
+        self.tracer.update_watchlist()
+        self.send_watchlist()
         self.next_command()
 
     def command_set_watch(self, payload):
+        """
+        Extends the watchlist and defers to user control.
+        """
         if not self.payload_check(payload, 'set_watch'):
             return self.next_command()
 
         self.tracer.extend_watchlist(*payload)
         self.send_watchlist()
+        self.next_command()
 
     def command_clear_watch(self, payload):
+        """
+        Clears expressions from the watchlist and defers to user control.
+        """
         if not self.payload_check(payload, 'clear_watch'):
             return self.next_command()
 
@@ -471,8 +501,12 @@ class RemoteCommandManager(CommandManager):
             self.tracer.watchlist.pop(w, None)
 
         self.send_watchlist()
+        self.next_command()
 
     def command_set_break(self, payload):
+        """
+        Sets a breakpoint and defers to user control.
+        """
         if not self.payload_check(payload, 'set_break'):
             return self.next_command()
         try:
@@ -494,6 +528,9 @@ class RemoteCommandManager(CommandManager):
         self.next_command()
 
     def command_clear_break(self, payload):
+        """
+        Clears a breakpoint and defers to user control.
+        """
         if not self.payload_check(payload, 'clear_break'):
             return self.next_command()
         try:
@@ -506,6 +543,9 @@ class RemoteCommandManager(CommandManager):
         self.next_command()
 
     def command_list(self, payload):
+        """
+        List the contents of a file and defer to user control.
+        """
         if not self.payload_check(payload, 'list'):
             return self.next_command()
 
@@ -523,28 +563,91 @@ class RemoteCommandManager(CommandManager):
                 # Send back the slice of the file that they requested.
                 msg = fmt_msg(
                     'list',
-                    self.tracer.file_cache[filename][
-                        payload.get('start'):payload.get('end')
-                    ],
+                    '\n'.join(
+                        self.tracer._file_cache[filename][
+                            int(payload.get('start')):int(payload.get('end'))
+                        ]
+                    ),
                     serial=pickle.dumps
                 )
         except KeyError:  # The file failed to be cached.
-            err_msg = fmt_err_msg(
+            msg = fmt_err_msg(
                 'list',
                 'File %s does not exist' % payload['file'],
                 serial=pickle.dumps
             )
-            return self.next_command(err_msg)
+        except TypeError:
+            # This occurs when we fail to convert the 'start' or 'stop' fields
+            # to integers.
+            msg = fmt_err_msg(
+                'list',
+                'List slice arguments convertable to type int',
+                serial=pickle.dumps
+            )
 
         self.next_command(msg)
 
+    def _stack_shift(self, direction):
+        """
+        Shifts the stack up or down depending on dirction.
+        If direction is positive, travel up, if direction is negative, travel
+        down. If direction is 0, do nothing.
+        Does not check if the frame you are shifting to exists.
+        """
+        if direction == 0:
+            return
+        offset = -1 if abs(direction) == direction else 1
+        self.tracer.curindex += offset
+        self.tracer.curframe = self.tracer.stack[self.tracer.curindex][0]
+        self.tracer.curframe_locals = self.tracer.curframe.f_locals
+        self.tracer.update_watchlist()
+        self.send_watchlist()
+        self.send_stack()
+        self.lineno = None
+
+    def command_up(self, payload):
+        """
+        Step up the stack and defer to user control.
+        """
+        if self.tracer.curindex == 0:
+            # If this is the case, we cannot move up.
+            self.send_error('up', 'Oldest frame')
+        else:
+            self._stack_shift(+1)
+        self.next_command()
+
+    def command_down(self, payload):
+        """
+        Step down the stack and defer to user control
+        """
+        if self.tracer.curindex == len(self.tracer.stack) - 1:
+            # If this is the case, we cannot move down.
+            self.send_error('down', 'Newest frame')
+        else:
+            self._stack_shift(-1)
+        self.next_command()
+
+    def command_locals(self, payload):
+        """
+        Sends back the current frame locals and defer to user control.
+        """
+        self.send_event('locals', self.tracer.curframe_locals)
+        self.next_command()
+
     def command_start(self, payload):
+        """
+        Sends back initial information and defers to user control.
+        """
         self.send_breakpoints()
+        self.send_output()
         self.send_watchlist()
         self.send_stack()
         self.next_command()
 
     def command_disable(self, payload):
+        """
+        Disables the tracer.
+        """
         if not self.payload_check(payload, 'disable'):
             return self.next_command()
         if payload not in ['soft', 'hard']:
