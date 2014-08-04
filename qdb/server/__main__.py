@@ -13,6 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import argparse
+from contextlib2 import ExitStack
+
+from logbook import FileHandler
 
 from qdb.server.server import QdbServer
 
@@ -92,4 +95,14 @@ if __name__ == '__main__':
         help='The disable mode to use when a session times out.',
         default='soft',
     )
-    QdbServer(**vars(argparser.parse_args())).serve_forever()
+    argparser.add_argument(
+        '--log',
+        type=str,
+        metavar='LOG-FILE',
+        help='The path to the logging output file. If ommited, logging goes to'
+        'stderr.'
+    )
+    args = vars(argparser.parse_args())
+    log = args.pop('log', None)
+    with FileHandler(log) if log else ExitStack():
+        QdbServer(**args).serve_forever()

@@ -23,7 +23,7 @@ try:
 except ImportError:
     from StringIO import StringIO
 
-from logbook import Logger
+from logbook import Logger, FileHandler
 
 from qdb.comm import RemoteCommandManager, fmt_msg
 from qdb.errors import QdbUnreachableBreakpoint, QdbQuit
@@ -81,7 +81,8 @@ class Qdb(Bdb, object):
                  redirect_output=True,
                  retry_attepts=10,
                  uuid=None,
-                 cmd_manager=None):
+                 cmd_manager=None,
+                 log_file=None):
         """
         Host and port define the address to connect to.
         The auth_msg is a message that will be sent with the start event to the
@@ -129,6 +130,10 @@ class Qdb(Bdb, object):
             sys.stdout = self.stdout
             sys.stderr = self.stderr
         self.forget()
+        self.log_handler = None
+        if log_file:
+            self.log_handler = FileHandler(log_file)
+            self.log_handler.push_application()
         if not cmd_manager:
             cmd_manager = RemoteCommandManager
         self.cmd_manager = cmd_manager(self)
@@ -335,14 +340,14 @@ class Qdb(Bdb, object):
         Returns True iff we should stop in the stackframe, False otherwise.
         """
         filename = self.canonic(stackframe.f_code.co_filename)
-        if not filename in self.breaks:
+        if filename not in self.breaks:
             return False
         lineno = stackframe.f_lineno
-        if not lineno in self.breaks[filename]:
+        if lineno not in self.breaks[filename]:
             # The line itself has no breakpoint, but maybe the line is the
             # first line of a function with breakpoint set by function name.
             lineno = stackframe.f_code.co_firstlineno
-            if not lineno in self.breaks[filename]:
+            if lineno not in self.breaks[filename]:
                 return False
 
         # flag says ok to delete temporary breakpoints.
@@ -439,6 +444,8 @@ class Qdb(Bdb, object):
             else:
                 raise ValueError("mode must be 'hard' or 'soft'")
         finally:
+            if self.log_handler:
+                self.log_handler.pop_application()
             self.cmd_manager.stop()
 
     def __enter__(self):

@@ -4,4 +4,6 @@ gevent-websocket==0.9.3
 greenlet==0.4.2
 gipc==0.4.0
 
+contextlib2==0.4.0
+
 Logbook==0.7.0
