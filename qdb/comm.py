@@ -17,6 +17,7 @@ import atexit
 from bdb import Breakpoint
 from contextlib import contextmanager
 import errno
+from itertools import count, izip, dropwhile
 import os
 import signal
 from struct import pack, unpack
@@ -166,18 +167,26 @@ class CommandManager(object):
     def send_stack(self):
         """
         Sends the stack event.
+        This filters out frames based on the rules defined in the tracer's
+        skip_fn. The index reported will account for any skipped frames, such
+        that querying the stack at the index provided will return the current
+        frame.
         """
-        # Starting at the frame we are in, we need to filter based on the
-        # tracer's skip_fn rules. We will also format each stackframe.
+        stack = []
+        index = self.tracer.curindex
+        for n, (frame, line) in izip(count(), self.tracer.stack):
+            if self.tracer \
+                    .skip_fn(self.tracer.canonic(frame.f_code.co_filename)):
+                if n < self.tracer.curindex:
+                    index -= 1  # Drop the index to account for a skip
+                continue  # Don't add frames we need to skip.
+
+            stack.append(self._fmt_stackframe(frame, line))
+
         self.send_event(
-            'stack',
-            {
-                'index': self.tracer.curindex,
-                'stack': [self._fmt_stackframe(stackframe, line)
-                          for stackframe, line in self.tracer.stack
-                          if not self.tracer.skip_fn(
-                              self.tracer.canonic(
-                                  stackframe.f_code.co_filename))],
+            'stack', {
+                'index': index,
+                'stack': stack,
             }
         )
 
@@ -581,50 +590,94 @@ class RemoteCommandManager(CommandManager):
             # to integers.
             msg = fmt_err_msg(
                 'list',
-                'List slice arguments convertable to type int',
+                'List slice arguments must be convertable to type int',
                 serial=pickle.dumps
             )
 
         self.next_command(msg)
 
-    def _stack_shift(self, direction):
+    def _stack_jump_to(self, index):
         """
-        Shifts the stack up or down depending on dirction.
-        If direction is positive, travel up, if direction is negative, travel
-        down. If direction is 0, do nothing.
-        Does not check if the frame you are shifting to exists.
+        Jumps the stack to a specific index.
+        Raises an IndexError if the desired index does not exist.
         """
-        if direction == 0:
-            return
-        offset = -1 if abs(direction) == direction else 1
-        self.tracer.curindex += offset
-        self.tracer.curframe = self.tracer.stack[self.tracer.curindex][0]
+        curindex = self.tracer.curindex
+        self.tracer.curindex = index
+
+        try:
+            log.info('old %d, new %d' % (curindex, index))
+            self.tracer.curframe = self.tracer.stack[self.tracer.curindex][0]
+        except IndexError:
+            log.info('IndexError')
+            self.tracer.curindex = curindex  # restore the state.
+            raise
+
         self.tracer.curframe_locals = self.tracer.curframe.f_locals
         self.tracer.update_watchlist()
         self.send_watchlist()
         self.send_stack()
         self.lineno = None
 
+    def _stack_shift_direction(self, direction):
+        """
+        Shifts the stack up or down depending on dirction.
+        If direction is positive, travel up, if direction is negative, travel
+        down. If direction is 0, do nothing.
+        If you cannot shift in the desired direction, an IndexError will be
+        raised.
+        """
+        if direction == 0:
+            return  # nop
+
+        coef = -1 if direction > 0 else 1
+
+        # The substack is a stack were substack[n] is n + 1 frames away from
+        # curframe where we are traveling in the direction we want to shift.
+        if coef < 0:
+            # coef < 0 so we are moving UP the stack:
+            # substack is the stack containing all frames above curframe.
+            substack = list(reversed(self.tracer
+                                     .stack[:self.tracer.curindex]))
+        else:
+            # coef > 0 so we are moving DOWN the stack:
+            # substack is the stack containing all the frames below curframe.
+            substack = self.tracer.stack[self.tracer.curindex + 1:]
+
+        # The difference in the current index and the desired index.
+        if not substack:
+            raise IndexError('Shifted off the stack')
+
+        diff = len(list(dropwhile(
+            lambda fl: self.tracer.skip_fn(fl[0].f_code.co_filename),
+            substack,
+        ))) - len(substack) + 1
+
+        self._stack_jump_to(self.tracer.curindex + coef * diff)
+
     def command_up(self, payload):
         """
         Step up the stack and defer to user control.
+        This will 'ignore' frames that we should skip, potentially going up
+        more than one stackframe.
         """
-        if self.tracer.curindex == 0:
-            # If this is the case, we cannot move up.
+        try:
+            self._stack_shift_direction(+1)
+        except IndexError:
             self.send_error('up', 'Oldest frame')
-        else:
-            self._stack_shift(+1)
+
         self.next_command()
 
     def command_down(self, payload):
         """
         Step down the stack and defer to user control
+        This will 'ignore' frames that we should skip, potentially going down
+        more than one stackframe.
         """
-        if self.tracer.curindex == len(self.tracer.stack) - 1:
-            # If this is the case, we cannot move down.
+        try:
+            self._stack_shift_direction(-1)
+        except IndexError:
             self.send_error('down', 'Newest frame')
-        else:
-            self._stack_shift(-1)
+
         self.next_command()
 
     def command_locals(self, payload):
