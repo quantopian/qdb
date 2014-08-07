@@ -17,7 +17,7 @@ import atexit
 from bdb import Breakpoint
 from contextlib import contextmanager
 import errno
-from itertools import count, izip, dropwhile
+from itertools import takewhile
 import os
 import signal
 from struct import pack, unpack
@@ -174,7 +174,7 @@ class CommandManager(object):
         """
         stack = []
         index = self.tracer.curindex
-        for n, (frame, line) in izip(count(), self.tracer.stack):
+        for n, (frame, line) in enumerate(self.tracer.stack):
             if self.tracer \
                     .skip_fn(self.tracer.canonic(frame.f_code.co_filename)):
                 if n < self.tracer.curindex:
@@ -601,17 +601,11 @@ class RemoteCommandManager(CommandManager):
         Jumps the stack to a specific index.
         Raises an IndexError if the desired index does not exist.
         """
-        curindex = self.tracer.curindex
+        # Try to jump here first. This could raise an IndexError which will
+        # prevent the tracer's state from being corrupted.
+        self.tracer.curframe = self.tracer.stack[index][0]
+
         self.tracer.curindex = index
-
-        try:
-            log.info('old %d, new %d' % (curindex, index))
-            self.tracer.curframe = self.tracer.stack[self.tracer.curindex][0]
-        except IndexError:
-            log.info('IndexError')
-            self.tracer.curindex = curindex  # restore the state.
-            raise
-
         self.tracer.curframe_locals = self.tracer.curframe.f_locals
         self.tracer.update_watchlist()
         self.send_watchlist()
@@ -629,30 +623,33 @@ class RemoteCommandManager(CommandManager):
         if direction == 0:
             return  # nop
 
-        coef = -1 if direction > 0 else 1
+        direction = -1 if direction > 0 else 1
 
         # The substack is a stack were substack[n] is n + 1 frames away from
         # curframe where we are traveling in the direction we want to shift.
-        if coef < 0:
-            # coef < 0 so we are moving UP the stack:
+        if direction < 0:
+            # We are moving UP the stack:
             # substack is the stack containing all frames above curframe.
-            substack = list(reversed(self.tracer
-                                     .stack[:self.tracer.curindex]))
+            substack = self.tracer.stack[self.tracer.curindex:0:direction]
         else:
-            # coef > 0 so we are moving DOWN the stack:
+            # We are moving DOWN the stack:
             # substack is the stack containing all the frames below curframe.
             substack = self.tracer.stack[self.tracer.curindex + 1:]
 
-        # The difference in the current index and the desired index.
         if not substack:
+            # If substack is empty, you are at the end of the stack, shifting
+            # in the desired direction is impossible.
             raise IndexError('Shifted off the stack')
 
-        diff = len(list(dropwhile(
+        # Count the number of frames that we are not allowed to stop in.
+        # We add one at the end because there is an implied shift of at least
+        # one stackframe.
+        diff = sum(1 for _ in takewhile(
             lambda fl: self.tracer.skip_fn(fl[0].f_code.co_filename),
             substack,
-        ))) - len(substack) + 1
+        )) + 1
 
-        self._stack_jump_to(self.tracer.curindex + coef * diff)
+        self._stack_jump_to(self.tracer.curindex + direction * diff)
 
     def command_up(self, payload):
         """
