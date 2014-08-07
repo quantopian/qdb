@@ -308,24 +308,27 @@ class SessionStore(object):
         except OSError:
             return False
 
-    def send_to_tracer(self, uuid, msg=None, event=None):
+    def send_to_tracer(self, uuid, event):
         """
-        Sends a pre-packed message or unpacked event the tracer uuid.
+        Sends an event the tracer uuid.
         """
         if uuid not in self._sessions:
             log.warn('send_to_tracer failed: session %s does not exist'
                      % uuid)
             return  # Session doesn't exist.
 
-        if event:
-            try:
-                msg = fmt_msg(event['e'], event.get('p'), serial=pickle.dumps)
-            except (pickle.PicklingError, KeyError) as e:
-                log.warn('send_to_tracer(%s, event=%s) failed: %s'
-                         % (uuid, event, e))
-                raise  # The event is just wrong, reraise this to the user.
-        if not msg:
-            return  # No message to send.
+        try:
+            if event['e'] == 'pause' and self.is_local(uuid):
+                self.pause_tracer(uuid)
+                log.info('Raising pause signal (%d) in server local session %s'
+                         % (self._sessions[uuid].pause_signal, uuid))
+                self._update_timestamp(uuid)
+                return  # We 'sent' this event.
+            msg = fmt_msg(event['e'], event.get('p'), serial=pickle.dumps)
+        except (pickle.PicklingError, KeyError) as e:
+            log.warn('send_to_tracer(uuid=%s, event=%s) failed: %s'
+                     % (uuid, event, e))
+            raise  # The event is just wrong, reraise this to the user.
 
         sck = self._sessions[uuid].tracer
         if sck:
@@ -334,25 +337,21 @@ class SessionStore(object):
             log.warn('No client session is alive for %s' % uuid)
         self._update_timestamp(uuid)
 
-    def send_to_clients(self, uuid, msg=None, event=None):
+    def send_to_clients(self, uuid, event):
         """
-        Routes a message to all of the clients taking the same arguments as
-        send_to_client.
+        Routes an event to all clients connected to a session.
         """
         if uuid not in self._sessions:
             log.warn('send_to_clients failed: session %s does not exist'
                      % uuid)
             return  # Session doesn't exist.
 
-        if event:
-            try:
-                msg = fmt_msg(event['e'], event.get('p'), serial=json.dumps)
-            except (KeyError, ValueError) as e:
-                log.warn('send_to_clients(%s, event=%s) failed: %s'
-                         % (uuid, event, e))
-                raise
-        if not msg:
-            return  # No message to send.
+        try:
+            msg = fmt_msg(event['e'], event.get('p'), serial=json.dumps)
+        except (KeyError, ValueError) as e:
+            log.warn('send_to_clients(uuid=%s, event=%s) failed: %s'
+                     % (uuid, event, e))
+            raise
 
         clients = self._sessions[uuid].clients
         for client in set(clients):
