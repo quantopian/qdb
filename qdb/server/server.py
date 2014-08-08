@@ -83,6 +83,10 @@ class QdbServer(object):
         self.address = host, port
 
     @property
+    def addresses(self):
+        return self.tracer_server.address, self.client_server.address
+
+    @property
     def is_running(self):
         """
         Returns True iff the server is running, otherwise returns False.

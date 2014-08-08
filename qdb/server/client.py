@@ -55,7 +55,6 @@ class QdbClientServer(object):
         The auth_timeout is the amount of time to leave a socket open awaiting
         the start_event or first message. This is measured in seconds.
         """
-        self.address = host, port
         self.client_auth_fn = client_auth_fn or (lambda _: True)  # No auth
         self.auth_timeout = auth_timeout
         self.route = re.compile(route, re.IGNORECASE)
@@ -64,10 +63,18 @@ class QdbClientServer(object):
             # We need exactly one regex group.
             raise QdbInvalidRoute(self.route)
         self._server = pywsgi.WSGIServer(
-            self.address,
+            (host, port),
             self.handle_client,
             handler_class=WebSocketHandler,
         )
+
+    @property
+    def address(self):
+        return self._server.address
+
+    @property
+    def server_port(self):
+        return self._server.server_port
 
     def send_error(self, ws, error_type, error_data):
         """

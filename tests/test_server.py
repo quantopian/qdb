@@ -95,12 +95,13 @@ class ServerTester(TestCase):
         Tests a non-valid auth message for a client.
         """
         with QdbServer(client_host='localhost',
-                       client_port=8003,
+                       client_port=0,
                        client_auth_fn=lambda _: False,  # Fail all new clients.
                        tracer_server=QdbNopServer()) as server:
 
             ws = create_connection(
-                'ws://localhost:8003' + DEFAULT_ROUTE_FMT.format(uuid='test')
+                'ws://localhost:%d%s' % (server.client_server.server_port,
+                                         DEFAULT_ROUTE_FMT.format(uuid='test'))
             )
             send_client_event(ws, 'start', 'friendzoned-again')
 
@@ -120,11 +121,12 @@ class ServerTester(TestCase):
 
     def test_client_auth_timeout(self):
         with QdbServer(client_host='localhost',
-                       client_port=8004,
+                       client_port=0,
                        auth_timeout=1,  # Timeout after 1 second.
                        tracer_server=QdbNopServer()) as server:
             ws = create_connection(
-                'ws://localhost:8004' + DEFAULT_ROUTE_FMT.format(uuid='test')
+                'ws://localhost:%d%s' % (server.client_server.server_port,
+                                         DEFAULT_ROUTE_FMT.format(uuid='test'))
             )
 
             auth_failed_dict = fmt_err_msg('auth', 'No start event received')
@@ -148,13 +150,15 @@ class ServerTester(TestCase):
         Tests a non-valid auth message for a tracer.
         """
         with QdbServer(tracer_host='localhost',
-                       tracer_port=8001,
+                       tracer_port=0,
                        tracer_auth_fn=lambda _: False,
                        client_server=QdbNopServer()) as server:
 
             auth_failed_dict = fmt_err_msg('auth', 'Authentication failed')
 
-            sck = socket.create_connection(('localhost', 8001))
+            sck = socket.create_connection(
+                ('localhost', server.tracer_server.server_port)
+            )
 
             send_tracer_event(sck, 'start', {
                 'uuid': 'test',
@@ -171,12 +175,14 @@ class ServerTester(TestCase):
         Tests the auth timeout for new connections from the client.
         """
         with QdbServer(tracer_host='localhost',
-                       tracer_port=8006,
+                       tracer_port=0,
                        client_server=QdbNopServer(),
                        auth_timeout=1) as server:
 
             auth_failed_dict = fmt_err_msg('auth', 'No start event received')
-            sck = socket.create_connection(('localhost', 8006))
+            sck = socket.create_connection(
+                ('localhost', server.tracer_server.server_port)
+            )
 
             self.assertEqual(auth_failed_dict, recv_tracer_event(sck))
             self.assertFalse('test' in server.session_store)
@@ -187,21 +193,24 @@ class ServerTester(TestCase):
         Tests that timeout sends a disable message with the proper mode..
         """
         with QdbServer(tracer_host='localhost',
-                       tracer_port=8007,
+                       tracer_port=0,
                        client_host='localhost',
-                       client_port=8008,
+                       client_port=0,
                        inactivity_timeout=0.01,  # minutes
                        sweep_time=0.01,  # seconds
                        timeout_disable_mode=mode) as server:
 
-            tracer = socket.create_connection(('localhost', 8007))
+            tracer = socket.create_connection(
+                ('localhost', server.tracer_server.server_port)
+            )
             send_tracer_event(tracer, 'start', {
                 'uuid': 'test',
                 'auth': '',
                 'local': (0, 0),
             })
             client = create_connection(
-                'ws://localhost:8008' + DEFAULT_ROUTE_FMT.format(uuid='test')
+                'ws://localhost:%d%s' % (server.client_server.server_port,
+                                         DEFAULT_ROUTE_FMT.format(uuid='test'))
             )
             send_client_event(client, 'start', '')
             self.assertEqual({'e': 'start', 'p': ''},
@@ -218,12 +227,13 @@ class ServerTester(TestCase):
         """
         with QdbServer(tracer_server=QdbNopServer(),
                        client_host='localhost',
-                       client_port=8010,
+                       client_port=0,
                        attach_timeout=0.01,
                        timeout_disable_mode=mode) as server:
 
             client = create_connection(
-                'ws://localhost:8010' + DEFAULT_ROUTE_FMT.format(uuid='test')
+                'ws://localhost:%d%s' % (server.client_server.server_port,
+                                         DEFAULT_ROUTE_FMT.format(uuid='test'))
             )
             send_client_event(client, 'start', '')
             disable_event = None
@@ -243,12 +253,14 @@ class ServerTester(TestCase):
         Tests the case where a tracer attaches but no client does.
         """
         with QdbServer(tracer_host='localhost',
-                       tracer_port=8011,
+                       tracer_port=0,
                        client_server=QdbNopServer(),
                        attach_timeout=0.01,
                        timeout_disable_mode=mode) as server:
 
-            tracer = socket.create_connection(('localhost', 8011))
+            tracer = socket.create_connection(
+                ('localhost', server.tracer_server.server_port)
+            )
             send_tracer_event(tracer, 'start', {
                 'uuid': 'test',
                 'auth': '',
@@ -272,10 +284,11 @@ class ServerTester(TestCase):
         """
         with QdbServer(tracer_server=QdbNopServer(),
                        client_host='localhost',
-                       client_port=8012,
+                       client_port=0,
                        attach_timeout=ALLOW_ORPHANS) as server:
             client = create_connection(
-                'ws://localhost:8012' + DEFAULT_ROUTE_FMT.format(uuid='test')
+                'ws://localhost:%d%s' % (server.client_server.server_port,
+                                         DEFAULT_ROUTE_FMT.format(uuid='test'))
             )
             send_client_event(client, 'start', '')
             sleep(0.01)  # yield to the session_store to let it get attached.
@@ -288,9 +301,11 @@ class ServerTester(TestCase):
         """
         with QdbServer(client_server=QdbNopServer(),
                        tracer_host='localhost',
-                       tracer_port=8013,
+                       tracer_port=0,
                        attach_timeout=ALLOW_ORPHANS) as server:
-            tracer = socket.create_connection(('localhost', 8013))
+            tracer = socket.create_connection(
+                ('localhost', server.tracer_server.server_port)
+            )
             send_tracer_event(tracer, 'start', {
                 'uuid': 'test',
                 'auth': '',
