@@ -237,7 +237,7 @@ class ServerTester(TestCase):
             )
             send_client_event(client, 'start', '')
             disable_event = None
-            with Timeout(0.02, False):
+            with Timeout(0.1, False):
                 error_event = recv_client_event(client)
                 disable_event = recv_client_event(client)
 
@@ -267,7 +267,7 @@ class ServerTester(TestCase):
                 'local': (0, 0),
             })
             disable_event = None
-            with Timeout(0.02, False):
+            with Timeout(0.1, False):
                 error_event = recv_tracer_event(tracer)
                 disable_event = recv_tracer_event(tracer)
 
