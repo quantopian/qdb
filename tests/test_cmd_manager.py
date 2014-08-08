@@ -32,6 +32,21 @@ from qdb.server import QdbServer
 from tests import fix_filename
 
 
+def set_break_params(tracer, filename, lineno, temporary=False, cond=None,
+                     funcname=None, **kwargs):
+    """
+    Formats the parameters for set_break.
+    """
+    filename = filename or tracer.default_file
+    return {
+        'filename': filename,
+        'lineno': lineno,
+        'temporary': temporary,
+        'cond': cond,
+        'funcname': funcname
+    }
+
+
 class RemoteCommandManagerTester(TestCase):
     """
     Tests the various behaviors that the RemoteCommandManager should conform
@@ -113,6 +128,23 @@ class RemoteCommandManagerTester(TestCase):
             cmd_manager = self.cmd_manager(tracer)
             cmd_manager.start(self.bad_auth_msg)
             cmd_manager.next_command()
+
+    @parameterized.expand([
+        ({'file': 'test.py', 'line': 2},),
+        ({'line': 2},),
+        ({'line': 2, 'cond': '2 + 2 == 4'},),
+        ({'line': 2, 'func': 'f'},),
+        ({'line': 2, 'file': 't.py', 'cond': 'f()', 'func': 'g'},)
+    ])
+    def test_fmt_breakpoint_dict(self, arg_dict):
+        tracer = self.MockTracer()
+        tracer.default_file = 'd.py'
+        cmd_manager = self.cmd_manager(tracer)
+        cpy = dict(arg_dict)
+        self.assertEqual(
+            cmd_manager.fmt_breakpoint_dict(cpy),
+            set_break_params(tracer, **cpy)
+        )
 
     @parameterized.expand([
         (lambda t: t.set_step, 'step'),

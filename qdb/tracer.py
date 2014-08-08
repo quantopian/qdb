@@ -206,10 +206,12 @@ class Qdb(Bdb, object):
             return False
 
     def set_break(self, filename, lineno, temporary=False, cond=None,
-                  funcname=None):
+                  funcname=None, **kwargs):
         """
         Sets a breakpoint. This is overridden to account for the filecache
         and for unreachable lines.
+        **kwargs are ignored. This is to work with payloads that pass extra
+        fields to the set_break payload.
         """
         filename = self.canonic(filename) if filename else self.default_file
         try:
