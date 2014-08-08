@@ -355,7 +355,7 @@ class RemoteCommandManager(CommandManager):
             self.reader.terminate()
         self.socket.close()
 
-    def format_breakpoint_dict(self, breakpoint):
+    def fmt_breakpoint_dict(self, breakpoint):
         """
         Makes our protocol for breakpoints match the Bdb protocol.
         """
@@ -365,10 +365,11 @@ class RemoteCommandManager(CommandManager):
             # Do some formatting here to make the params cleaner.
             breakpoint['filename'] = breakpoint.pop('file')
             breakpoint['lineno'] = breakpoint.pop('line')
-            if 'temp' in breakpoint:
-                breakpoint['temporary'] = breakpoint.pop('temp')
-            if 'cond' in breakpoint:
-                breakpoint['funcname'] = breakpoint.pop('cond')
+
+            breakpoint['temporary'] = breakpoint.pop('temp', None)
+            breakpoint['funcname'] = breakpoint.pop('func', None)
+
+            breakpoint.setdefault('cond', None)
 
             return breakpoint
 
@@ -519,7 +520,7 @@ class RemoteCommandManager(CommandManager):
         if not self.payload_check(payload, 'set_break'):
             return self.next_command()
         try:
-            breakpoint = self.format_breakpoint_dict(payload)
+            breakpoint = self.fmt_breakpoint_dict(payload)
         except QdbBreakpointReadError as b:
             err_msg = fmt_err_msg('set_break', str(b), serial=pickle.dumps)
             return self.next_command(err_msg)
@@ -543,7 +544,7 @@ class RemoteCommandManager(CommandManager):
         if not self.payload_check(payload, 'clear_break'):
             return self.next_command()
         try:
-            breakpoint = self.format_breakpoint_dict(payload)
+            breakpoint = self.fmt_breakpoint_dict(payload)
         except QdbBreakpointReadError as b:
             err_msg = fmt_err_msg('clear_break', str(b), serial=pickle.dumps)
             return self.next_command(err_msg)
