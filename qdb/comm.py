@@ -368,7 +368,7 @@ class RemoteCommandManager(CommandManager):
             if 'temp' in breakpoint:
                 breakpoint['temporary'] = breakpoint.pop('temp')
             if 'cond' in breakpoint:
-                breakpoint['funcname'] = breakpoint.pop('func')
+                breakpoint['funcname'] = breakpoint.pop('cond')
 
             return breakpoint
 
