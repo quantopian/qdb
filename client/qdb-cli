@@ -21,6 +21,7 @@ from cmd import Cmd
 import json
 from multiprocessing import Process
 import os
+from textwrap import dedent
 
 from websocket import create_connection
 
@@ -100,7 +101,8 @@ class QdbRepl(Cmd, object):
             return None
         try:
             return literal_eval(arg)
-        except ValueError:
+        except (ValueError, SyntaxError) as e:
+            print('*** error: invalid breakpoint dict: %s' % e)
             return None
 
     def missing_argument(self, cmd):
@@ -116,21 +118,69 @@ class QdbRepl(Cmd, object):
         self.send_command('step')
     do_s = do_step
 
+    def help_step(self):
+        print(dedent(
+            """\
+            s(tep)
+            Execute the next line, function call, or return.
+            """
+        ))
+    help_s = help_step
+
+
     def do_return(self, arg):
         self.send_command('return')
     do_r = do_return
+
+    def help_return(self):
+        print(dedent(
+            """\
+            r(eturn)
+            Execute until the return event for the current stackframe.
+            """
+        ))
+    help_r = help_return
 
     def do_next(self, arg):
         self.send_command('next')
     do_n = do_next
 
+    def help_next(self):
+        print(dedent(
+            """\
+            n(ext)
+            Execute up to the next line in the current frame.
+            """
+        ))
+    help_n = help_next
+
     def do_until(self, arg):
         self.send_command('until')
     do_unt = do_until
 
+    def help_until(self):
+        print(dedent(
+            """\
+            unt(il)
+            Execute until the line greater than the current is hit or until
+            you return from the current frame.
+            """
+        ))
+    help_unt = help_until
+
     def do_continue(self, arg):
         self.send_command('continue')
     do_c = do_continue
+
+    def help_continue(self):
+        print(dedent(
+            """\
+            c(ontinue)
+            Continue execution until the next breakpoint is hit. If there are
+            no more breakpoints, stop tracing.
+            """
+        ))
+    help_c = help_continue
 
     def do_watch(self, arg):
         if not arg:
@@ -139,12 +189,31 @@ class QdbRepl(Cmd, object):
         self.send_command('set_watch', [arg])
     do_w = do_watch
 
+    def help_watch(self):
+        print(dedent(
+            """\
+            w(atch) EXPR
+            Adds an expression to the watchlist.
+            """
+        ))
+    help_w = help_watch
+
     def do_unwatch(self, arg):
         if not arg:
             self.missing_argument('unw(atch)')
             return
         self.send_command('clear_watch', [arg])
     do_unw = do_unwatch
+
+    def help_unwatch(self):
+        print(dedent(
+            """\
+            unw(atch) EXPR
+            Removes an expression from the watchlist if it is already being
+            watched, otherwise does nothing.
+            """
+        ))
+    help_unw = help_unwatch
 
     def do_break(self, arg, temp=False):
         if not arg:
@@ -155,6 +224,16 @@ class QdbRepl(Cmd, object):
             self.send_command('set_break', break_arg)
     do_b = do_break
 
+    def help_break(self):
+        print(dedent(
+            """\
+            b(reak) BREAK-DICT
+            Adds a breakpoint with the form:
+            {'file': str, 'line': int, 'temp': bool, 'cond': str, 'func': str}
+            """
+        ))
+    help_b = help_break
+
     def do_clear(self, arg):
         if not arg:
             self.missing_argument('cl(ear)')
@@ -164,8 +243,27 @@ class QdbRepl(Cmd, object):
             self.send_command('clear_break', break_arg)
     do_cl = do_clear
 
+    def help_clear(self):
+        print(dedent(
+            """\
+            cl(ear) BREAK-DICT
+            Clears a breakpoint with the form:
+            {'file': str, 'line': int, 'temp': bool, 'cond': str, 'func': str}
+            Only 'file' and 'line' are needed.
+            """
+        ))
+    help_cl = help_clear
+
     def do_tbreak(self, arg):
         self.do_break(arg, temp=True)
+
+    def help_tbreak(self):
+        print(dedent(
+            """\
+            tbreak BREAK-DICT
+            Same as break, but with 'temp' defaulted to True.
+            """
+        ))
 
     def do_list(self, arg):
         if not arg:
@@ -185,20 +283,65 @@ class QdbRepl(Cmd, object):
         })
     do_l = do_list
 
+    def help_list(self):
+        print(dedent(
+            """\
+            l(ist) FILE [START, [END]]
+            Shows the content of a file where START is the first line to show
+            and END is the last. This acts like a Python slice.
+            """
+        ))
+    help_l = help_list
+
     def do_up(self, arg):
         self.send_command('up')
     do_u = do_up
+
+    def help_up(self):
+        print(dedent(
+            """\
+            u(p)
+            Steps up a stackframe if possible.
+            """
+        ))
+    help_u = help_up
 
     def do_down(self, arg):
         self.send_command('down')
     do_d = do_down
 
+    def help_down(self):
+        print(dedent(
+            """\
+            d(own)
+            Steps down a stackframe if possible.
+            """
+        ))
+    help_d = help_down
+
     def do_locals(self, arg):
         self.send_command('locals')
+
+    def help_locals(self):
+        print(dedent(
+            """\
+            locals
+            Report back the current stackframe's locals.
+            """
+        ))
 
     def do_pause(self, arg):
         self.send_command('pause')
     do_p = do_pause
+
+    def help_pause(self):
+        print(dedent(
+            """\
+            p(ause)
+            Pauses execution, stopping at the next allowed event.
+            """
+        ))
+    help_p = help_pause
 
     def do_quit(self, arg):
         if not arg or arg == 'soft':
@@ -212,6 +355,26 @@ class QdbRepl(Cmd, object):
         exit(0)  # I think we're done here
     do_q = do_quit
     do_EOF = do_quit  # EOF soft kills.
+
+    def help_quit(self):
+        print(dedent(
+            """
+            q(uit) [MODE]
+            Stops the debugging session with the given mode, defaulting to
+            'soft'.
+            """
+        ))
+    help_q = help_quit
+    help_EOF = help_quit
+
+    def help_help(self):
+        print(dedent(
+            """\
+            help [COMMAND]
+            Without COMMAND, help prints all available commands.
+            With COMMAND, help prints the help string for the given command.
+            """
+        ))
 
 
 class ServerPrinter(object):

@@ -46,7 +46,9 @@
     "d" "down"
     "p" "pause"
     "locals"
-    "tbreak"))
+    "tbreak"
+    "help"
+    "EOF"))
 
 (defvar qdb-font-lock-keywords
   (list
