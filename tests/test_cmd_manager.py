@@ -115,7 +115,7 @@ class RemoteCommandManagerTester(TestCase):
         Assert that the correct error is raised if we cannot connect.
         """
         tracer = self.MockTracer()
-        tracer.address = 'not' + self.tracer_host, 0
+        tracer.address = 'not' + self.tracer_host, self.tracer_port
         with self.assertRaises(QdbFailedToConnect):
             self.cmd_manager(tracer).start('')
 

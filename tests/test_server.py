@@ -72,7 +72,10 @@ class ServerTester(TestCase):
         """
         Tests starting and stopping the server.
         """
-        server = QdbServer()
+        server = QdbServer(
+            client_port=0,
+            tracer_port=0
+        )
         self.assertFalse(server.is_running)
         server.start()
         self.assertTrue(server.is_running)
@@ -84,7 +87,10 @@ class ServerTester(TestCase):
         Tests that stopping a server from one greenlet causes serve_forever()
         to return.
         """
-        server = QdbServer()
+        server = QdbServer(
+            client_port=0,
+            tracer_port=0
+        )
         with Timeout(1, False):
             spawn_later(0.3, server.stop)  # Stop the server in 0.3 seconds.
             server.serve_forever()
