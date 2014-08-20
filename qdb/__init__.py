@@ -33,6 +33,7 @@ from qdb.errors import (  # NOQA
     QdbQuit,
     QdbFailedToConnect,
     QdbCommunicationError,
+    QdbUnreachableBreakpoint,
 )
 
 _version = '0.1.0'

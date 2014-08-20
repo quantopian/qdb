@@ -13,7 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from bdb import BdbQuit
-from StringIO import StringIO
 
 
 class QdbError(Exception):
@@ -64,13 +63,7 @@ class QdbUnreachableBreakpoint(QdbError):
         self.breakpoint = breakpoint
 
     def __str__(self):
-        try:
-            pp = StringIO()
-            self.breakpoint.bpprint(pp)
-            string = 'Failed to set ' + pp.getvalue()
-            return string
-        finally:
-            pp.close()
+            return 'Failed to set breakpoint: %s' % self.breakpoint
 
     def __repr__(self):
         return 'QdbUnreachableBreakpoint(%s)' % repr(self.breakpoint)

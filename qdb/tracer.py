@@ -176,12 +176,13 @@ class Qdb(Bdb, object):
         If the file does not exist in the cache, it is cached from
         disk.
         """
+        canonic_name = self.canonic(filename)
         try:
-            return self._file_cache[filename]
+            return self._file_cache[canonic_name]
         except KeyError:
-            if not self.cache_file(filename):
+            if not self.cache_file(canonic_name):
                 return []
-            return self._file_cache.get(filename)
+            return self._file_cache.get(canonic_name)
 
     def cache_file(self, filename, contents=None):
         """
@@ -191,12 +192,13 @@ class Qdb(Bdb, object):
         string.
         Returns True if the file caching succeeded, otherwise returns false.
         """
+        canonic_name = self.canonic(filename)
         if contents:
-            self._file_cache[filename] = contents.splitlines()
+            self._file_cache[canonic_name] = contents.splitlines()
             return True
         try:
-            with open(filename, 'r') as f:
-                self._file_cache[filename] = map(
+            with open(canonic_name, 'r') as f:
+                self._file_cache[canonic_name] = map(
                     lambda l: l[:-1] if l.endswith('\n') else l,
                     f.readlines()
                 )
