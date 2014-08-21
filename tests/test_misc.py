@@ -13,14 +13,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import sys
+import time
 from unittest import TestCase
 
+import gevent
 from nose_parameterized import parameterized
 
 from qdb.tracer import (
     default_eval_fn,
     default_exception_serializer,
 )
+from qdb.utils import Timeout, QdbTimeout
 
 
 class TestException(Exception):
@@ -75,3 +78,76 @@ class DefaultFnTester(TestCase):
             result,
             default_exception_serializer(exception),
         )
+
+
+class UtilsTester(TestCase):
+    @parameterized.expand([
+        ('self', None, lambda self, u, t: self.assertIs(u, t)),
+        ('exc', ValueError('u'),
+         lambda self, u, t: self.assertEqual(str(u), 'u')),
+    ])
+    def test_timeout_start(self, test_name, exc, assertion):
+        """
+        Tests running a timeout with the start method that will raise itself.
+        """
+        t = QdbTimeout(1, exc)
+        t.start()
+        try:
+            self.assertTrue(t.pending)
+            time.sleep(2)
+            if exc:
+                self.fail('Timeout did not stop the sleep')
+        except Exception as u:  # noqa
+            assertion(self, u, t)
+        else:
+            self.assertIs(
+                exc, None, 'QdbTimeout(1, None) should not raise an exception'
+            )
+
+    @parameterized.expand([
+        ('self', None, lambda self, u, t: self.assertIs(u, t)),
+        ('exc', ValueError('u'),
+         lambda self, u, t: self.assertEqual(str(u), 'u')),
+        ('suppress', False, None),
+    ])
+    def test_timeout_ctx_mgr(self, test_name, exc, assertion):
+        try:
+            with QdbTimeout(1, exc) as t:
+                self.assertTrue(t.pending)
+                time.sleep(2)
+                if exc:
+                    self.fail('Timeout did not stop the sleep')
+        except Exception as u:
+            assertion(self, u, t)
+        else:
+            self.assertIs(
+                exc,
+                False,
+                'QdbTimeout(1, False) should not raise an exception'
+            )
+
+    def test_timeout_cancel(self):
+        """
+        Tests that stopping will stop the timer.
+        """
+        with QdbTimeout(1) as t:
+            self.assertTrue(t.pending)
+            t.cancel()
+            self.assertFalse(t.pending)
+
+    def test_exit_clears_timer(self):
+        """
+        Tests that __exit__ stops the timer.
+        """
+        with QdbTimeout(1) as t:
+            self.assertTrue(t.pending)
+        self.assertFalse(t.pending)
+
+    def test_timeout_smart_constructor(self):
+        """
+        Tests that the smart constructor returns the correct type.
+        """
+        green = Timeout(1, green=True)
+        self.assertTrue(isinstance(green, gevent.Timeout))
+        not_green = Timeout(1, green=False)
+        self.assertTrue(isinstance(not_green, QdbTimeout))

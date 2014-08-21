@@ -34,7 +34,7 @@ from qdb.errors import (
     QdbUnreachableBreakpoint,
     QdbAuthenticationError,
 )
-from qdb.utils import QdbTimeout
+from qdb.utils import Timeout
 
 try:
     from cStringIO import StringIO
@@ -117,6 +117,7 @@ class CommandManager(object):
 
     def __init__(self, tracer):
         self.tracer = tracer
+        self.green = self.tracer.green
 
     def _fmt_stackframe(self, stackframe, line):
         """
@@ -334,9 +335,10 @@ class RemoteCommandManager(CommandManager):
                   self.socket.fileno(),
                   self.tracer.pause_signal),
         )
-        with QdbTimeout(5, QdbFailedToConnect(self.tracer.address,
-                                              self.tracer.retry_attepts)):
-            # Recieve a message to know that the reader is ready to begin.
+        with Timeout(5, QdbFailedToConnect(self.tracer.address,
+                                           self.tracer.retry_attepts),
+                     green=self.green):
+            # Receive a message to know that the reader is ready to begin.
             self.pipe.get()
 
         self.send(
@@ -715,7 +717,7 @@ class RemoteCommandManager(CommandManager):
         self.tracer.disable(payload)
 
 
-def get_events_from_socket(sck):
+def get_events_from_socket(sck, green=False):
     """
     Yields valid events from the server socket.
     """
@@ -727,7 +729,7 @@ def get_events_from_socket(sck):
             rlen = unpack('>i', rlen)[0]
             bytes_received = 0
             resp = ''
-            with QdbTimeout(1):
+            with Timeout(1, False, green=green):
                 while bytes_received < rlen:
                     resp += sck.recv(rlen - bytes_received)
                     bytes_received = len(resp)
@@ -777,6 +779,8 @@ class ServerReader(object):
         Infinitly reads events off the server, if it is a pause, then it pauses
         the process, otherwise, it passes the message along.
         """
+        # Send a message to alert the tracer that we are ready to begin reading
+        # messages.
         self.debugger_pipe.put(fmt_msg('reader_started'))
         try:
             for event in get_events_from_socket(self.server_comm):

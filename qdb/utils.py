@@ -14,7 +14,18 @@
 # limitations under the License.
 import signal
 
+import gevent
+
 from qdb.errors import QdbError
+
+
+def Timeout(seconds, exception=None, green=False, timer_signal=None):
+    """
+    A timeout smart constructor that returns a gevent.Timeout or a QdbTimeout.
+    """
+    if green:
+        return gevent.Timeout(seconds, exception)
+    return QdbTimeout(seconds, exception, timer_signal)
 
 
 class QdbTimeout(QdbError):
@@ -38,11 +49,14 @@ class QdbTimeout(QdbError):
         """
         seconds is the number of seconds to run this Timeout for.
         exception is the exception to raise in the case of a timeout.
-        If exception is None, no exception is raised, if exception is True,
-        raise this object. Otherwise, raise the exception given.
-        timer_signal is the signal to raise to signal a timeout.
-        If timer_signal is None, raise a SIGALRM.
+        When exception is ommited or None, the QdbTimeout itself is raised.
+        timer_signal is the signal to raise in the case of a timeout, this
+        defaults to SIGALRM.
         """
+        if not isinstance(seconds, int):
+            raise ValueError('integer argument expected, got %s'
+                             % type(seconds).__name__)
+
         self._exception = exception
         self.seconds = seconds
         self.signal = timer_signal or signal.SIGALRM
@@ -53,7 +67,7 @@ class QdbTimeout(QdbError):
         The signal handler that will be used to raise the timeout excpetion.
         """
         if signum == self.signal and self._running:
-            if self._exception is True or self._exception is None:
+            if not self._exception:
                 raise self
             raise self._exception
 
@@ -61,24 +75,31 @@ class QdbTimeout(QdbError):
         """
         Starts the timer.
         """
-        self._running = True
         signal.signal(self.signal, self._signal_handler)
+        self._running = True
         signal.alarm(self.seconds)
 
-    def stop(self):
+    def cancel(self):
         """
-        Stops the timer
+        Cancels the timer
         """
         self._running = False
         signal.alarm(0)  # Cancel the alarm.
+
+    @property
+    def pending(self):
+        """
+        Read only access to the internal running state.
+        """
+        return self._running
 
     def __enter__(self):
         self.start()
         return self
 
     def __exit__(self, exc_type, exc_value, exc_traceback):
-        self.stop()
-        if exc_value is self and self._exception is None:
+        self.cancel()
+        if exc_value is self and self._exception is False:
             return True
 
     def __str__(self):

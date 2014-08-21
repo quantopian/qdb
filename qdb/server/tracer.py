@@ -69,7 +69,7 @@ class QdbTracerServer(StreamServer):
         Reads a single message.
         """
         try:
-            return next(get_events_from_socket(conn))
+            return next(get_events_from_socket(conn, green=True))
         except StopIteration:
             return {}
 
@@ -150,7 +150,7 @@ class QdbTracerServer(StreamServer):
             ):
                 return  # No browser so the attach failed.
 
-            for event in get_events_from_socket(conn):
+            for event in get_events_from_socket(conn, green=True):
                 # Send the serialized event back to the browser.
                 self.session_store.send_to_clients(uuid, event=event)
         except socket.error:
