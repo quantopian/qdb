@@ -409,11 +409,14 @@ class Qdb(Bdb, object):
         self.cmd_manager.send_watchlist()
         self.cmd_manager.send_output()
         self.cmd_manager.send_stack()
-        msg = fmt_msg('exception', {
-            'type': str(exc_type),
-            'value': str(exc_value),
-            'traceback': traceback.format_tb(exc_traceback)
-        })
+        msg = fmt_msg(
+            'exception', {
+                'type': str(exc_type),
+                'value': str(exc_value),
+                'traceback': traceback.format_tb(exc_traceback)
+            },
+            serial=pickle.dumps,
+        )
         self.cmd_manager.next_command(msg)
 
     def do_clear(self, bpnum):
