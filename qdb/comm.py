@@ -574,7 +574,7 @@ class RemoteCommandManager(CommandManager):
                 msg = fmt_msg(
                     'list',
                     '\n'.join(
-                        self.tracer._file_cache[filename][
+                        self.tracer._file_cache[self.tracer.canonic(filename)][
                             int(payload.get('start')):int(payload.get('end'))
                         ]
                     ),
