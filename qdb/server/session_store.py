@@ -379,7 +379,7 @@ class SessionStore(object):
             try:
                 client.close()
             except WebSocketError as e:
-                if str(e) != 'Socket is dead':
+                if str(e) != 'Socket is dead' or e.errno != errno.EBADF:
                     log.exception(
                         'Exception caught while killing client for '
                         'session %s:' % uuid
