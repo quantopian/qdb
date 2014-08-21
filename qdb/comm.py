@@ -20,10 +20,10 @@ import errno
 from itertools import takewhile
 import os
 import signal
+import socket
 from struct import pack, unpack
 import sys
 
-from gevent import socket, Timeout
 import gipc
 from logbook import Logger
 
@@ -34,6 +34,7 @@ from qdb.errors import (
     QdbUnreachableBreakpoint,
     QdbAuthenticationError,
 )
+from qdb.utils import QdbTimeout
 
 try:
     from cStringIO import StringIO
@@ -329,12 +330,15 @@ class RemoteCommandManager(CommandManager):
         self._socket_connect()
         self.reader = gipc.start_process(
             target=ServerReader,
-            args=(child_end, os.getpid(), self.socket.fileno(),
+            args=(child_end, os.getpid(),
+                  self.socket.fileno(),
                   self.tracer.pause_signal),
         )
-        with Timeout(5, QdbFailedToConnect(self.tracer.address,
-                                           self.tracer.retry_attepts)):
+        with QdbTimeout(5, QdbFailedToConnect(self.tracer.address,
+                                              self.tracer.retry_attepts)):
+            # Recieve a message to know that the reader is ready to begin.
             self.pipe.get()
+
         self.send(
             fmt_msg(
                 'start', {
@@ -723,7 +727,7 @@ def get_events_from_socket(sck):
             rlen = unpack('>i', rlen)[0]
             bytes_received = 0
             resp = ''
-            with Timeout(1, False):
+            with QdbTimeout(1):
                 while bytes_received < rlen:
                     resp += sck.recv(rlen - bytes_received)
                     bytes_received = len(resp)
