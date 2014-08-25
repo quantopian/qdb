@@ -392,7 +392,7 @@ class SessionStore(object):
                 session.tracer.close()
             except socket.error as e:
                 # EPIPE means it is already closed.
-                if e.errno != errno.EPIPE:
+                if e.errno not in [errno.EPIPE, errno.EBADF]:
                     log.exception(
                         'Exception caught while killing tracer for session %s:'
                         % uuid
