@@ -353,6 +353,8 @@ class RemoteCommandManager(CommandManager):
         """
         if self.reader:
             self.reader.terminate()
+        # Signal to the server that we are done tracing.
+        self.send_event('disabled')
         self.socket.close()
 
     def fmt_breakpoint_dict(self, breakpoint):
@@ -732,7 +734,9 @@ def get_events_from_socket(sck):
                 return  # We are not getting bytes anymore.
 
             cmd = pickle.loads(resp)
-            cmd['e']
+            if cmd['e'] == 'disabled':
+                # We are done tracing.
+                return
         except (socket.error, pickle.UnpicklingError) as e:
             # We can no longer talk the the server.
             log.warn('Exception raised reading from socket')
