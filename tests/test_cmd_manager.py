@@ -375,6 +375,27 @@ class RemoteCommandManagerTester(TestCase):
 
         self.assertEqual(test_var, 'mutated')
 
+    def test_send_disabled(self):
+        class cmd_manager(self.cmd_manager):
+            disabled = False
+
+            def send_disabled(self):
+                self.disabled = True
+
+        db = Qdb(
+            uuid='send_disabled_test',
+            cmd_manager=cmd_manager,
+            host=self.tracer_host,
+            port=self.tracer_port,
+            redirect_output=False,
+        )
+        sleep(0.01)
+        db.set_trace(stop=False)
+        db.disable()
+
+        self.assertTrue(db.cmd_manager.disabled)
+        self.server.session_store.slaughter(db.uuid)
+
     @parameterized.expand([(False,), (True,)])
     def test_send_stack_results(self, use_skip_fn):
         """

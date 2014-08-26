@@ -15,15 +15,14 @@
 import sys
 from unittest import TestCase
 
-import gevent
 from gevent import Timeout
-from gevent.queue import Queue, Empty
 from mock import patch
 
 from qdb import Qdb
-from qdb.comm import CommandManager, NopCommandManager
+from qdb.comm import NopCommandManager
 
 from tests import fix_filename
+from tests.utils import QueueCommandManager
 
 
 def global_fn():
@@ -34,54 +33,6 @@ def global_fn():
 
 # A global variable used in the watchlist.
 global_var = 'global_var'
-
-
-class QueueCommandManager(CommandManager):
-    """
-    A command manager that takes a queue of functions that act on
-    the tracer and apply them one at a time with each call to next_command().
-    """
-    def __init__(self, tracer):
-        super(QueueCommandManager, self).__init__(tracer)
-        self.queue = Queue()
-        self.sent = []
-
-    def enqueue(self, fn):
-        """
-        Enqueues a new message to be consumed.
-        """
-        self.queue.put(fn)
-
-    def user_wait(self, duration):
-        """
-        Simulates waiting on the user to feed us input for duration seconds.
-        """
-        self.enqueue(lambda t: gevent.sleep(duration))
-
-    def clear(self):
-        """
-        Clears the internal list of functions.
-        """
-        self.queue = Queue()
-
-    def user_next_command(self):
-        """
-        Removes one message from the internal queue and apply it to the
-        debugger.
-        """
-        try:
-            self.queue.get_nowait()(self.tracer)
-        except Empty:
-            return
-
-    def send(self, msg):
-        # Collect the output so that we can make assertions about it.
-        self.sent.append(msg)
-
-    stop = clear
-
-    def start(self, auth_msg=''):
-        pass
 
 
 class TracerTester(TestCase):
@@ -121,6 +72,15 @@ class TracerTester(TestCase):
         self.assertIs(Qdb._instance, None)
         # Assert that __exit__ stopped the command manager.
         cmd_stop.assert_called_once_with()
+
+    def test_is_singleton(self):
+        """
+        Tests that two newly created Qdb objects are the same.
+        """
+        self.assertIs(
+            Qdb(cmd_manager=NopCommandManager),
+            Qdb(cmd_manager=NopCommandManager)
+        )
 
     def test_set_step(self):
         """
