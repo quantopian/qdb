@@ -36,13 +36,11 @@ class QdbTimeout(QdbError):
             if t is u:
                 cleanup()
     """
-    def __init__(self, seconds, exception=None, signal=None):
+    def __init__(self, seconds, exception=None):
         """
         seconds is the number of seconds to run this Timeout for.
         exception is the exception to raise in the case of a timeout.
         When exception is ommited or None, the QdbTimeout itself is raised.
-        signal is the signal to raise in the case of a timeout, this defaults
-        to SIGALRM.
         """
         if not isinstance(seconds, int):
             raise ValueError('integer argument expected, got %s'
@@ -51,7 +49,6 @@ class QdbTimeout(QdbError):
         self._exception = exception
         self._existing_handler = None
         self.seconds = seconds
-        self.signal = signal or signal_module.SIGALRM
         self._running = False
 
     def _signal_handler(self, signum, stackframe):
@@ -60,7 +57,7 @@ class QdbTimeout(QdbError):
         """
         if self._running:
             # Restore the orignal handler in case it times out.
-            signal_module.signal(self.signal, self._existing_handler)
+            signal_module.signal(signal_module.SIGALRM, self._existing_handler)
             if not self._exception:
                 raise self
             raise self._exception
@@ -69,8 +66,8 @@ class QdbTimeout(QdbError):
         """
         Starts the timer.
         """
-        self._existing_handler = signal_module.getsignal(self.signal)
-        signal_module.signal(self.signal, self._signal_handler)
+        self._existing_handler = signal_module.getsignal(signal_module.SIGALRM)
+        signal_module.signal(signal_module.SIGALRM, self._signal_handler)
         self._running = True
         signal_module.alarm(self.seconds)
 
@@ -81,7 +78,7 @@ class QdbTimeout(QdbError):
         self._running = False
         signal_module.alarm(0)  # Cancel the alarm.
         # Restore the original handler in case the user cancels.
-        signal_module.signal(self.signal, self._existing_handler)
+        signal_module.signal(signal_module.SIGALRM, self._existing_handler)
 
     @property
     def pending(self):
@@ -104,7 +101,7 @@ class QdbTimeout(QdbError):
 
     def __repr__(self):
         return 'QdbTimeout(seconds=%s, exception=%s, timer_signal=%)' \
-            % (self.seconds, self.exception, self.signal)
+            % (self.seconds, self.exception, signal_module.SIGALRM)
 
 
 class _TimeoutMagic(tuple):
@@ -112,22 +109,17 @@ class _TimeoutMagic(tuple):
     _TimeoutMagic is really just a tuple that can be called to get a new
     Timeout that is either gevented or not.
     """
-    def __call__(self, seconds, exception=None, green=False, signal=None):
+    def __call__(self, seconds, exception=None, green=False):
         """
         A timeout smart constructor that returns a gevent.Timeout or a
         QdbTimeout.
         """
-        if green and signal:
-            raise ValueError(
-                'Timeout cannnot both be green=True and have a signal'
-            )
-
         if green:
-            timeout = gevent.Timeout(seconds, exception)
+            timeout = gevent.Timeout
         else:
-            timeout = QdbTimeout(seconds, exception, signal)
+            timeout = QdbTimeout
 
-        return timeout
+        return timeout(seconds, exception)
 
 
 # The way this works is that in an except block, if you pass a tuple of

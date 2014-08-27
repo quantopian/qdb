@@ -93,7 +93,7 @@ class UtilsTester(TestCase):
         """
         tsignal = signal.SIGALRM
         existing_handler = signal.getsignal(tsignal)
-        t = QdbTimeout(1, exc, signal=tsignal)
+        t = QdbTimeout(1, exc)
         t.start()
         with self.assertRaises(Exception) as cm:
             self.assertTrue(t.pending)
@@ -114,7 +114,7 @@ class UtilsTester(TestCase):
         tsignal = signal.SIGALRM
         existing_handler = signal.getsignal(tsignal)
         try:
-            with QdbTimeout(1, exc, signal=tsignal) as t:
+            with QdbTimeout(1, exc) as t:
                 self.assertTrue(t.pending)
                 time.sleep(2)
                 if exc:
@@ -169,6 +169,7 @@ class UtilsTester(TestCase):
         """
         Asserts that users may use the normal try/catch syntax with
         the Timeout smart constructor.
+        This test will fail if except Timeout does NOT catch the exception.
         """
         try:
             raise Timeout(1, green=green)
