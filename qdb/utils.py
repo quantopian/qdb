@@ -66,8 +66,10 @@ class QdbTimeout(QdbError):
         """
         Starts the timer.
         """
-        self._existing_handler = signal_module.getsignal(signal_module.SIGALRM)
-        signal_module.signal(signal_module.SIGALRM, self._signal_handler)
+        self._existing_handler = signal_module.signal(
+            signal_module.SIGALRM,
+            self._signal_handler
+        )
         self._running = True
         signal_module.alarm(self.seconds)
 
