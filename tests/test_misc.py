@@ -12,6 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import signal
 import sys
 import time
 from unittest import TestCase
@@ -90,15 +91,18 @@ class UtilsTester(TestCase):
         """
         Tests running a timeout with the start method that will raise itself.
         """
-        t = QdbTimeout(1, exc)
+        tsignal = signal.SIGALRM
+        existing_handler = signal.getsignal(tsignal)
+        t = QdbTimeout(1, exc, signal=tsignal)
         t.start()
-        with self.assertRaises(Exception) as e:
+        with self.assertRaises(Exception) as cm:
             self.assertTrue(t.pending)
             time.sleep(2)
             if exc:
                 self.fail('Timeout did not stop the sleep')
 
-        self.assertIs(e, exc or t)
+        self.assertIs(cm.exception, exc or t)
+        self.assertIs(signal.getsignal(tsignal), existing_handler)
 
     @parameterized.expand([
         ('self', None, lambda self, u, t: self.assertIs(u, t)),
@@ -107,8 +111,10 @@ class UtilsTester(TestCase):
         ('suppress', False, None),
     ])
     def test_timeout_ctx_mgr(self, test_name, exc, assertion):
+        tsignal = signal.SIGALRM
+        existing_handler = signal.getsignal(tsignal)
         try:
-            with QdbTimeout(1, exc) as t:
+            with QdbTimeout(1, exc, signal=tsignal) as t:
                 self.assertTrue(t.pending)
                 time.sleep(2)
                 if exc:
@@ -122,22 +128,32 @@ class UtilsTester(TestCase):
                 'QdbTimeout(1, False) should not raise an exception'
             )
 
+        self.assertIs(signal.getsignal(tsignal), existing_handler)
+
     def test_timeout_cancel(self):
         """
         Tests that stopping will stop the timer.
         """
+        tsignal = signal.SIGALRM
+        existing_handler = signal.getsignal(tsignal)
         with QdbTimeout(1) as t:
             self.assertTrue(t.pending)
             t.cancel()
             self.assertFalse(t.pending)
 
+        self.assertIs(signal.getsignal(tsignal), existing_handler)
+
     def test_exit_clears_timer(self):
         """
         Tests that __exit__ stops the timer.
         """
+        tsignal = signal.SIGALRM
+        existing_handler = signal.getsignal(tsignal)
         with QdbTimeout(1) as t:
             self.assertTrue(t.pending)
         self.assertFalse(t.pending)
+
+        self.assertIs(signal.getsignal(tsignal), existing_handler)
 
     def test_timeout_smart_constructor(self):
         """
@@ -147,3 +163,22 @@ class UtilsTester(TestCase):
         self.assertTrue(isinstance(green, gevent.Timeout))
         not_green = Timeout(1, green=False)
         self.assertTrue(isinstance(not_green, QdbTimeout))
+
+    @parameterized.expand([(False,), (True,)])
+    def test_smart_constructor_can_catch(self, green):
+        """
+        Asserts that users may use the normal try/catch syntax with
+        the Timeout smart constructor.
+        """
+        try:
+            raise Timeout(1, green=green)
+        except Timeout:
+            pass
+
+    @parameterized.expand([(False,), (True,)])
+    def test_timout_isinstance(self, green):
+        """
+        Asserts that the Timeout smart constructor returns are instances of
+        Timeout.
+        """
+        self.assertIsInstance(Timeout(1, green=green), Timeout)
