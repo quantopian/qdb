@@ -131,6 +131,17 @@ class CommandManager(object):
             'code': code,
         }
 
+    def send_disabled(self):
+        """
+        Sends a message to the server to say that the tracer is done.
+        """
+        try:
+            self.send_event('disabled')
+        except socket.error:
+            # We may safely ignore errors that occur here because we are
+            # already disabled.
+            pass
+
     def send_breakpoints(self):
         """
         Sends the breakpoint list event.
@@ -247,10 +258,16 @@ class CommandManager(object):
         """
         raise NotImplementedError
 
-    @abstractmethod
     def stop(self):
         """
         Stop acquiring new commands.
+        """
+        self.send_disabled()
+        self.user_stop()
+
+    @abstractmethod
+    def user_stop(self):
+        """
         Use this to release and resources needed to generate the commands.
         """
         raise NotImplementedError
@@ -270,7 +287,7 @@ class NopCommandManager(CommandManager):
     def start(self, msg):
         pass
 
-    def stop(self):
+    def user_stop(self):
         pass
 
 
@@ -347,11 +364,11 @@ class RemoteCommandManager(CommandManager):
         )
         atexit.register(self.stop)
 
-    def stop(self):
+    def user_stop(self):
         """
         Stops the command manager, freeing its resources.
         """
-        if self.reader:
+        if self.reader and self.reader.is_alive():
             self.reader.terminate()
         self.socket.close()
 
@@ -732,7 +749,9 @@ def get_events_from_socket(sck):
                 return  # We are not getting bytes anymore.
 
             cmd = pickle.loads(resp)
-            cmd['e']
+            if cmd['e'] == 'disabled':
+                # We are done tracing.
+                return
         except (socket.error, pickle.UnpicklingError) as e:
             # We can no longer talk the the server.
             log.warn('Exception raised reading from socket')
@@ -812,7 +831,7 @@ class ServerLocalCommandManager(RemoteCommandManager):
             )
         )
 
-    def stop(self):
+    def user_stop(self):
         self.socket.close()
 
     def get_events(self):

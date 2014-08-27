@@ -153,6 +153,9 @@ class QdbTracerServer(StreamServer):
             for event in get_events_from_socket(conn):
                 # Send the serialized event back to the browser.
                 self.session_store.send_to_clients(uuid, event=event)
+
+            # When this is done, we should kill off the client connections too.
+            self.session_store.slaughter(uuid)
         except socket.error:
             log.info('Stream from %s to session %s closed unexpectedly'
                      % (addr, uuid))
