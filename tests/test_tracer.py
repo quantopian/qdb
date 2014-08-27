@@ -56,6 +56,7 @@ class TracerTester(TestCase):
         with patch.object(NopCommandManager, 'start') as cmd_start, \
                 patch.object(NopCommandManager, 'stop') as cmd_stop_scoped, \
                 Qdb(cmd_manager=NopCommandManager) as db:
+            db.set_trace()
             cmd_stop = cmd_stop_scoped
             cmd_start.assert_called_once_with('')
             line_1 = True

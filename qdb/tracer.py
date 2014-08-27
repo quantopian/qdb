@@ -456,7 +456,7 @@ class Qdb(Bdb, object):
             self.cmd_manager.stop()
 
     def __enter__(self):
-        self.set_trace(sys._getframe().f_back)
+        self.set_trace(sys._getframe().f_back, stop=False)
         return self
 
     def __exit__(self, type, value, traceback):
