@@ -82,6 +82,7 @@ class Qdb(Bdb, object):
                  retry_attepts=10,
                  uuid=None,
                  cmd_manager=None,
+                 green=False,
                  log_file=None):
         """
         Host and port define the address to connect to.
@@ -108,6 +109,8 @@ class Qdb(Bdb, object):
         commands by implementing a next_command method. If none, a new, default
         manager will be created that reads commands from the server at
         (host, port).
+        If green is True, this will use gevent safe timeouts, otherwise this
+        will use signal based timeouts.
         """
         super(Qdb, self).__init__()
         self.address = host, port
@@ -115,6 +118,7 @@ class Qdb(Bdb, object):
         self.exception_serializer = exception_serializer or \
             default_exception_serializer
         self.eval_fn = eval_fn or default_eval_fn
+        self.green = green
         self._file_cache = {}
         self.redirect_output = redirect_output
         self.retry_attepts = retry_attepts
