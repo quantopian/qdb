@@ -92,17 +92,13 @@ class UtilsTester(TestCase):
         """
         t = QdbTimeout(1, exc)
         t.start()
-        try:
+        with self.assertRaises(Exception) as e:
             self.assertTrue(t.pending)
             time.sleep(2)
             if exc:
                 self.fail('Timeout did not stop the sleep')
-        except Exception as u:  # noqa
-            assertion(self, u, t)
-        else:
-            self.assertIs(
-                exc, None, 'QdbTimeout(1, None) should not raise an exception'
-            )
+
+        self.assertIs(e, exc or t)
 
     @parameterized.expand([
         ('self', None, lambda self, u, t: self.assertIs(u, t)),
