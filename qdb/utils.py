@@ -12,11 +12,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import ast
 import signal as signal_module
+import sys
 
 import gevent
+from uuid import uuid4
 
-from qdb.errors import QdbError
+from qdb.errors import QdbError, QdbPrognEndsInStatement
 
 
 class QdbTimeout(QdbError):
@@ -142,3 +145,141 @@ class _TimeoutMagic(tuple):
 # Timeout is capitalized because in almost all use cases you can think of
 # this as a class, even though there is a little more going on.
 Timeout = _TimeoutMagic([gevent.Timeout, QdbTimeout])
+
+
+# Don't register the results from these nodes.
+NO_REGISTER_STATEMENTS = {
+    ast.FunctionDef,
+    ast.ClassDef,
+    ast.Return,
+    ast.Delete,
+    ast.Assign,
+    ast.AugAssign,
+    ast.Print,
+    ast.Import,
+    ast.ImportFrom,
+}
+
+
+def to_id_char(c, allow_num=True, default_char='_'):
+    """
+    Converts a character to a valid identifier character.
+    """
+    if not c or len(c) > 1:
+        raise ValueError('to_id_char expects only a single character')
+
+    ord_ = ord(c)
+    # Valid identifier character ranges.
+    if (ord_ >= 64 and ord_ <= 90) or (ord_ >= 97 and ord_ <= 122) \
+            or (allow_num and (ord_ >= 48 and ord_ <= 57)):
+        return c
+
+    return default_char
+
+
+def isolate_namespace(name):
+    """
+    Isolates name from the user's namespace by prefixing it with a pseudo
+    random string that is still a valid identifier.
+    """
+    name = ''.join([to_id_char(name[0], False)]
+                   + map(lambda c: to_id_char(c, True), name[1:]))
+    return 'a%s%s' % (uuid4().hex, name)
+
+
+def register_last_expr(tree, register):
+    """
+    Registers the last expression as register_as in the context of an AST.
+    tree may either be a list of nodes, or an ast node with a body.
+    Returns the newly modified structure AND mutates the original.
+    """
+    if isinstance(tree, list):
+        if not tree:
+            # Empty body.
+            return tree
+        # Allows us to use cases like directly passing orelse bodies.
+        last_node = tree[-1]
+    else:
+        last_node = tree.body[-1]
+    if type(last_node) in NO_REGISTER_STATEMENTS:
+        return tree
+
+    def mk_register_node(final_node):
+        return ast.Expr(
+            value=ast.Call(
+                func=ast.Name(
+                    id=register,
+                    ctx=ast.Load(),
+                ),
+                args=[
+                    final_node.value if isinstance(final_node, ast.Expr)
+                    else final_node
+                ],
+                keywords=[],
+                starargs=None,
+                kwargs=None,
+            )
+        )
+
+    if hasattr(last_node, 'body'):
+        # Deep inspect the body of the nodes.
+        register_last_expr(last_node, register)
+
+        # Try to register in all the body types.
+        try:
+            register_last_expr(last_node.orelse, register)
+        except AttributeError:
+            pass
+        try:
+            for handler in last_node.handlers:
+                register_last_expr(handler, register)
+        except AttributeError:
+            pass
+        try:
+            register_last_expr(last_node.finalbody, register)
+        except AttributeError:
+            pass
+    else:
+        # Nodes with no body require no recursive inspection.
+        tree.body.append(mk_register_node(last_node))
+
+    return ast.fix_missing_locations(tree)
+
+
+def single_mode_with_repr(src):
+    """
+    Creates the AST for single mode with a custom repr.
+    Returns the AST and the name to find the last expr.
+    """
+    register = isolate_namespace('register')
+    return register_last_expr(ast.parse(src), register), register
+
+
+def progn(src, eval_fn, stackframe=None):
+    """
+    Evaluate all expressions and statments in src, returns the result of the
+    last expression or raises a QdbPrognEndsInStatement if the last thing is a
+    statement.
+    """
+    stackframe = stackframe or sys._curframe.f_back
+    code, reg_in_ns = single_mode_with_repr(src)
+
+    store = {}
+
+    def register(expr):
+        """
+        Store the last expression's result.
+        """
+        store['expr'] = expr
+        return expr
+
+    # Add the register function to the namespace.
+    stackframe.f_globals[reg_in_ns] = register
+    eval_fn(code, stackframe, 'exec')
+
+    # Remove the register function from the namespace.
+    del stackframe.f_globals[reg_in_ns]
+    try:
+        return store['expr']
+    except KeyError:
+        raise QdbPrognEndsInStatement(src)
