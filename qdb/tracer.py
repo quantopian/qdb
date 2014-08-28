@@ -333,7 +333,8 @@ class Qdb(Bdb, object):
                     self.cmd_manager.send_error(
                         'condition', {
                             'cond': breakpoint.cond,
-                            'exc': self.debugger.exception_serializer(e),
+                            'line': line,
+                            'exc': self.exception_serializer(e),
                         }
                     )
                     # Return this breakpoint to be safe. The user will be
