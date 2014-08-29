@@ -168,15 +168,26 @@ Timeout = _TimeoutMagic([gevent.Timeout, QdbTimeout])
 
 # Don't register the results from these nodes.
 NO_REGISTER_STATEMENTS = {
+    # Classes and functions.
     ast.FunctionDef,
     ast.ClassDef,
     ast.Return,
+
+    # Assign and delete.
     ast.Delete,
     ast.Assign,
     ast.AugAssign,
+
     ast.Print,
+
+    # Imports
     ast.Import,
     ast.ImportFrom,
+
+    ast.Raise,
+
+    ast.Global,
+    ast.Pass,
 }
 
 
@@ -279,7 +290,7 @@ def progn(src, eval_fn=None, stackframe=None):
     register_name = isolate_namespace('register')
     code = register_last_expr(ast.parse(src), register_name)
 
-    stackframe = stackframe or sys._curframe.f_back
+    stackframe = stackframe or sys._getframe().f_back
     store = {}
 
     def register(expr):
@@ -295,7 +306,7 @@ def progn(src, eval_fn=None, stackframe=None):
 
     # Remove the register function from the namespace.
     # This is to not fill the namespace after mutliple calls to progn.
-    del stackframe.f_globals[register]
+    del stackframe.f_globals[register_name]
     try:
         # Attempt to retrieve the last expression.
         return store['expr']

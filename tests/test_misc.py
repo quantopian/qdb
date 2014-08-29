@@ -12,19 +12,47 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import ast
 import signal
 import sys
 import time
 from unittest import TestCase
 
 import gevent
+from mock import MagicMock
 from nose_parameterized import parameterized
 
+from qdb.errors import QdbPrognEndsInStatement
 from qdb.utils import (
     default_eval_fn,
     default_exception_serializer,
+    Timeout,
+    QdbTimeout,
+    progn,
 )
-from qdb.utils import Timeout, QdbTimeout
+
+
+class FakeFrame(object):
+    """
+    A fake stackframe for testing.
+    """
+    def __init__(self, locals=None, globals=None):
+        self._locals = locals or {}
+        self._globals = globals or {}
+
+    @property
+    def f_locals(self):
+        """
+        Returns a copy to globals.
+        """
+        return dict(self._locals)
+
+    @property
+    def f_globals(self):
+        """
+        Returns the actual globals.
+        """
+        return self._globals
 
 
 class TestException(Exception):
@@ -81,7 +109,7 @@ class DefaultFnTester(TestCase):
         )
 
 
-class UtilsTester(TestCase):
+class TimeoutTester(TestCase):
     @parameterized.expand([
         ('self', None, lambda self, u, t: self.assertIs(u, t)),
         ('exc', ValueError('u'),
@@ -183,3 +211,94 @@ class UtilsTester(TestCase):
         Timeout.
         """
         self.assertIsInstance(Timeout(1, green=green), Timeout)
+
+
+class PrognTester(TestCase):
+    @parameterized.expand([
+        ('literal_expr', '2 + 2', 4),
+        ('function_call', 'f()', 'f'),
+        ('compund', 'f(2 + 2)', 'f4'),
+        ('multi_line', 'f()\n2 + 2', 4),
+        ('with_semicolon', 'f(2);2 + 2', 4),
+        ('with_stmt', 'with c() as cv:\n    cv', 'c'),
+        ('if_true', 'if True:\n    True', True),
+        ('elif', 'if False:    pass\nelif True:\n    True', True),
+    ])
+    def test_progn_default(self, name, src, expected_value):
+        """
+        Asserts that progn returns the last expression is various snippets
+        of code. These should all be valid progn calls and return a value.
+        """
+        f = lambda n='': 'f%s' % n  # NOQA
+
+        class c(object):
+            """
+            Testing context manager.
+            """
+            def __enter__(self):
+                return 'c'
+
+            def __exit__(self, *args, **kwargs):
+                pass
+
+        self.assertEqual(progn(src), expected_value)
+
+    @parameterized.expand([
+        ('end_in_assgn', 'a = 5', QdbPrognEndsInStatement),
+        ('end_in_import', '2 + 2;import qdb', QdbPrognEndsInStatement),
+        ('src_raises', 'raise ValueError("v")', ValueError),
+        ('raise_ends_in_expr', 'raise ValueError("v");2 + 2', ValueError),
+    ])
+    def test_progn_raises(self, name, src, exc):
+        """
+        Tests the results of progn calls that raise exceptions.
+        Some are exceptions in the code, some are because they are invalid
+        progn calls.
+        """
+        with self.assertRaises(exc):
+            progn(src)
+
+    @parameterized.expand([
+        ('mutate_local', 'locals()["local"] = None;2 + 2',
+         lambda t, f: t.assertEqual(f.f_locals['local'], 'lvar')),
+        ('mutate_global', 'globals()["global_"] = None;2 + 2',
+         lambda t, f: t.assertIs(f.f_globals['global_'], None)),
+    ])
+    def test_progn_in_frame(self, name, src, assertion):
+        """
+        Tests that passing in a stackframe causes progn to evaluate code
+        in the new context.
+        Also asserts that implementation details do not leak out.
+        """
+        stackframe = FakeFrame({'local': 'lvar'}, {'global_': 'gvar'})
+        progn(src, stackframe=stackframe)
+        assertion(self, stackframe)
+
+        # Make sure the register function name didn't persist.
+        self.assertEqual(
+            ['__builtins__', 'global_'],
+            stackframe.f_globals.keys()
+        )
+
+    def test_progn_uses_custom_eval_fn(self):
+        """
+        Assert that the progn function uses custom eval functions properly.
+        """
+        eval_fn = MagicMock()
+
+        try:
+            progn('2 + 2', eval_fn=eval_fn)
+        except QdbPrognEndsInStatement:
+            # This is the error that we are getting because our eval function
+            # is not storing any results.
+            pass
+
+        calls = eval_fn.call_args_list
+
+        self.assertEqual(len(calls), 1)
+        call_args = calls[0][0]
+
+        # This is constructed inside the function, but should be a module.
+        self.assertIsInstance(call_args[0], ast.Module)
+        self.assertEqual(call_args[1], sys._getframe())
+        self.assertEqual(call_args[2], 'exec')
