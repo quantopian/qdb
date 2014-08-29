@@ -22,37 +22,18 @@ try:
     from cStringIO import StringIO
 except ImportError:
     from StringIO import StringIO
-
-from logbook import Logger, FileHandler
-
-from qdb.comm import RemoteCommandManager, fmt_msg
-from qdb.errors import QdbUnreachableBreakpoint, QdbQuit
-
 try:
     import cPickle as pickle
 except ImportError:
     import pickle
+from logbook import Logger, FileHandler
+
+from qdb.comm import RemoteCommandManager, fmt_msg
+from qdb.errors import QdbUnreachableBreakpoint, QdbQuit
+from qdb.utils import default_eval_fn, default_exception_serializer
+
 
 log = Logger('Qdb')
-
-
-def default_eval_fn(src, stackframe, mode='eval'):
-    """
-    Wrapper around vanilla eval with no safety.
-    """
-    code = compile(src, '<stdin>', mode)
-    if mode in ['exec', 'single']:
-        exec(code, stackframe.f_globals, stackframe.f_locals)
-        return
-
-    return eval(code, stackframe.f_globals, stackframe.f_locals)
-
-
-def default_exception_serializer(exception):
-    """
-    The default exception serializer for user exceptions in eval.
-    """
-    return '%s: %s' % (type(exception).__name__, str(exception))
 
 
 class Qdb(Bdb, object):

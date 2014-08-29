@@ -22,6 +22,25 @@ from uuid import uuid4
 from qdb.errors import QdbError, QdbPrognEndsInStatement
 
 
+def default_eval_fn(src, stackframe, mode='eval'):
+    """
+    Wrapper around vanilla eval with no safety.
+    """
+    code = compile(src, '<stdin>', mode)
+    if mode in ['exec', 'single']:
+        exec(code, stackframe.f_globals, stackframe.f_locals)
+        return
+
+    return eval(code, stackframe.f_globals, stackframe.f_locals)
+
+
+def default_exception_serializer(exception):
+    """
+    The default exception serializer for user exceptions in eval.
+    """
+    return '%s: %s' % (type(exception).__name__, str(exception))
+
+
 class QdbTimeout(QdbError):
     """
     A timer implemented with signals.
@@ -241,29 +260,26 @@ def register_last_expr(tree, register):
             pass
     else:
         # Nodes with no body require no recursive inspection.
-        tree.body.append(mk_register_node(last_node))
+        tree.body[-1] = mk_register_node(last_node)
 
     return ast.fix_missing_locations(tree)
 
 
-def single_mode_with_repr(src):
-    """
-    Creates the AST for single mode with a custom repr.
-    Returns the AST and the name to find the last expr.
-    """
-    register = isolate_namespace('register')
-    return register_last_expr(ast.parse(src), register), register
-
-
-def progn(src, eval_fn, stackframe=None):
+def progn(src, eval_fn=None, stackframe=None):
     """
     Evaluate all expressions and statments in src, returns the result of the
     last expression or raises a QdbPrognEndsInStatement if the last thing is a
     statement.
+    eval_fn is the function to evaluate the src with and should conform to the
+    same standards as the Qdb class's eval_fn param.
+    stackframe is the context to evaluate src in, if None, it will be the
+    calling stackframe.
     """
-    stackframe = stackframe or sys._curframe.f_back
-    code, reg_in_ns = single_mode_with_repr(src)
+    eval_fn = eval_fn or default_eval_fn
+    register_name = isolate_namespace('register')
+    code = register_last_expr(ast.parse(src), register_name)
 
+    stackframe = stackframe or sys._curframe.f_back
     store = {}
 
     def register(expr):
@@ -274,12 +290,15 @@ def progn(src, eval_fn, stackframe=None):
         return expr
 
     # Add the register function to the namespace.
-    stackframe.f_globals[reg_in_ns] = register
+    stackframe.f_globals[register_name] = register
     eval_fn(code, stackframe, 'exec')
 
     # Remove the register function from the namespace.
-    del stackframe.f_globals[reg_in_ns]
+    # This is to not fill the namespace after mutliple calls to progn.
+    del stackframe.f_globals[register]
     try:
+        # Attempt to retrieve the last expression.
         return store['expr']
     except KeyError:
+        # There was no final expression.
         raise QdbPrognEndsInStatement(src)

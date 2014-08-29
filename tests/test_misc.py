@@ -20,7 +20,7 @@ from unittest import TestCase
 import gevent
 from nose_parameterized import parameterized
 
-from qdb.tracer import (
+from qdb.utils import (
     default_eval_fn,
     default_exception_serializer,
 )
