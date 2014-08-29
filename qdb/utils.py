@@ -22,7 +22,7 @@ from uuid import uuid4
 from qdb.errors import QdbError, QdbPrognEndsInStatement
 
 
-def default_eval_fn(src, stackframe, mode='eval'):
+def default_eval_fn(src, stackframe, mode='eval', original=None):
     """
     Wrapper around vanilla eval with no safety.
     """
@@ -219,7 +219,7 @@ def isolate_namespace(name):
 
 def register_last_expr(tree, register):
     """
-    Registers the last expression as register_as in the context of an AST.
+    Registers the last expression as register in the context of an AST.
     tree may either be a list of nodes, or an ast node with a body.
     Returns the newly modified structure AND mutates the original.
     """
@@ -302,7 +302,7 @@ def progn(src, eval_fn=None, stackframe=None):
 
     # Add the register function to the namespace.
     stackframe.f_globals[register_name] = register
-    eval_fn(code, stackframe, 'exec')
+    eval_fn(code, stackframe, 'exec', original=src)
 
     # Remove the register function from the namespace.
     # This is to not fill the namespace after mutliple calls to progn.

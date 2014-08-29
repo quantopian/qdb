@@ -43,7 +43,7 @@ class FakeFrame(object):
     @property
     def f_locals(self):
         """
-        Returns a copy to globals.
+        Returns a copy of locals.
         """
         return dict(self._locals)
 
