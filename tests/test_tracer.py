@@ -390,7 +390,7 @@ class TracerTester(TestCase):
 
     def test_conditional_breakpoint(self):
         """
-        Tests conditional breakpoints.
+        Tests valid conditional breakpoints.
         WARNING: This test relies on the relative line numbers inside the test.
         """
         db = Qdb(cmd_manager=QueueCommandManager)
@@ -405,6 +405,50 @@ class TracerTester(TestCase):
         db.set_trace(stop=False)
         while loop_counter < 10:
             loop_counter += 1
+
+    def test_conditional_breakpoint_raises(self):
+        """
+        Tests conditional breakpoints that raise an exception.
+        WARNING: This test relies on the relative line numbers inside the test.
+        """
+        line = None
+        db = Qdb(cmd_manager=QueueCommandManager)
+        db.cmd_manager.enqueue(lambda t: self.assertEqual(line, 1))
+        line_offset = 5
+        # Set a condition that will raise a ValueError.
+        db.set_break(
+            self.filename,
+            sys._getframe().f_lineno + line_offset,
+            cond='raise ValueError("lolwut r u doing?")',
+        )
+        db.set_trace(stop=False)
+        line = 1
+        line = 2
+        line = 3
+
+    def test_conditional_breakpoint_timeout(self):
+        """
+        Tests conditional breakpoints that cause timeouts.
+        WARNING: This test relies on the relative line numbers inside the test.
+        """
+        def g():
+            while True:
+                pass
+
+        line = None
+        db = Qdb(cmd_manager=QueueCommandManager, execution_timeout=1)
+        db.cmd_manager.enqueue(lambda t: self.assertEqual(line, 1))
+        line_offset = 5
+        # Set a condition that will raise a ValueError.
+        db.set_break(
+            self.filename,
+            sys._getframe().f_lineno + line_offset,
+            cond='g()',
+        )
+        db.set_trace(stop=False)
+        line = 1
+        line = 2
+        line = 3
 
     def test_temporary_breakpoint(self):
         """

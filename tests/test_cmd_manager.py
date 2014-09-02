@@ -26,6 +26,7 @@ from qdb.comm import RemoteCommandManager, ServerLocalCommandManager, fmt_msg
 from qdb.errors import (
     QdbFailedToConnect,
     QdbAuthenticationError,
+    QdbExecutionTimeout,
 )
 from qdb.server import QdbServer
 
@@ -375,7 +376,63 @@ class RemoteCommandManagerTester(TestCase):
 
         self.assertEqual(test_var, 'mutated')
 
+    def test_eval_timeout(self):
+        """
+        Tests that evaluating user repl commands will raise Timeouts.
+        """
+        def g():
+            while True:
+                pass
+
+        prints = []
+
+        class cmd_manager(self.cmd_manager):
+            """
+            Captures print commands to make assertions on them.
+            """
+            def send_print(self, input_, exc, output):
+                prints.append({
+                    'input': input_,
+                    'exc': exc,
+                    'output': output
+                })
+
+        to_eval = 'g()'
+
+        db = Qdb(
+            uuid='timeout_test',
+            cmd_manager=cmd_manager,
+            host=self.tracer_host,
+            port=self.tracer_port,
+            redirect_output=False,
+            execution_timeout=1,
+        )
+        sleep(0.01)
+        self.server.session_store.send_to_tracer(
+            uuid=db.uuid,
+            event=fmt_msg('eval', to_eval)
+        )
+        self.server.session_store.send_to_tracer(
+            uuid=db.uuid,
+            event=fmt_msg('continue')
+        )
+        db.set_trace(stop=True)
+        self.server.session_store.slaughter(db.uuid)
+
+        self.assertTrue(prints)
+        print_ = prints[0]
+
+        self.assertEqual(print_['input'], to_eval)
+        self.assertTrue(print_['exc'])
+        self.assertEqual(
+            print_['output'],
+            db.exception_serializer(QdbExecutionTimeout(to_eval, 1))
+        )
+
     def test_send_disabled(self):
+        """
+        Tests that disabling sends a 'disabled' message back to the server.
+        """
         class cmd_manager(self.cmd_manager):
             disabled = False
 

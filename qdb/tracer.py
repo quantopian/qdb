@@ -208,7 +208,7 @@ class Qdb(Bdb, object):
             return self._file_cache[canonic_name]
         except KeyError:
             if not self.cache_file(canonic_name):
-                return ['']
+                return []
             return self._file_cache.get(canonic_name)
 
     def cache_file(self, filename, contents=None):
