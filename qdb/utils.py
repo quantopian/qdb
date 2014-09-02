@@ -191,7 +191,7 @@ NO_REGISTER_STATEMENTS = {
 }
 
 
-def to_id_char(c, allow_num=True, default_char='_'):
+def to_id_char(c, default_char='_'):
     """
     Converts a character to a valid identifier character.
     """
@@ -199,9 +199,9 @@ def to_id_char(c, allow_num=True, default_char='_'):
         raise ValueError('to_id_char expects only a single character')
 
     ord_ = ord(c)
-    # Valid identifier character ranges.
-    if (ord_ >= 64 and ord_ <= 90) or (ord_ >= 97 and ord_ <= 122) \
-            or (allow_num and (ord_ >= 48 and ord_ <= 57)):
+
+    # Only ascii letters
+    if (ord_ >= 64 and ord_ <= 90) or (ord_ >= 97 and ord_ <= 122):
         return c
 
     return default_char
@@ -212,8 +212,7 @@ def isolate_namespace(name):
     Isolates name from the user's namespace by prefixing it with a pseudo
     random string that is still a valid identifier.
     """
-    name = ''.join([to_id_char(name[0], False)]
-                   + map(lambda c: to_id_char(c, True), name[1:]))
+    name = ''.join(map(to_id_char, name))
     return 'a%s%s' % (uuid4().hex, name)
 
 
@@ -242,8 +241,7 @@ def register_last_expr(tree, register):
                     ctx=ast.Load(),
                 ),
                 args=[
-                    final_node.value if isinstance(final_node, ast.Expr)
-                    else final_node
+                    final_node.value,
                 ],
                 keywords=[],
                 starargs=None,
@@ -302,11 +300,12 @@ def progn(src, eval_fn=None, stackframe=None):
 
     # Add the register function to the namespace.
     stackframe.f_globals[register_name] = register
-    eval_fn(code, stackframe, 'exec', original=src)
-
-    # Remove the register function from the namespace.
-    # This is to not fill the namespace after mutliple calls to progn.
-    del stackframe.f_globals[register_name]
+    try:
+        eval_fn(code, stackframe, 'exec', original=src)
+    finally:
+        # Always remove the register function from the namespace.
+        # This is to not fill the namespace after mutliple calls to progn.
+        del stackframe.f_globals[register_name]
     try:
         # Attempt to retrieve the last expression.
         return store['expr']
