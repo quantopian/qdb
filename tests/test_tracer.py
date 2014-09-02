@@ -18,8 +18,14 @@ from unittest import TestCase
 from gevent import Timeout
 from mock import patch
 
+try:
+    from cStringIO import StringIO
+except ImportError:
+    from StringIO import StringIO
+
 from qdb import Qdb
 from qdb.comm import NopCommandManager
+from qdb.errors import QdbExecutionTimeout
 
 from tests import fix_filename
 from tests.utils import QueueCommandManager
@@ -318,13 +324,18 @@ class TracerTester(TestCase):
         Tests the watchlist by evaluating a constant, local function, local
         variable, global function, and global variable.
         """
-        db = Qdb(cmd_manager=NopCommandManager)
+        db = Qdb(cmd_manager=NopCommandManager, execution_timeout=1)
+
+        too_long_msg = db.exception_serializer(
+            QdbExecutionTimeout('too_long()', 1)
+        )
         db.extend_watchlist(
             '2 + 2',
             'local_var',
             'local_fn()',
             'global_var',
-            'global_fn()'
+            'global_fn()',
+            'too_long()',
         )
 
         def new_curframe():
@@ -348,6 +359,10 @@ class TracerTester(TestCase):
         local_var = 'local_var'  # NOQA
         local_fn = lambda: 'local_fn'  # NOQA
 
+        def too_long():
+            while True:
+                pass
+
         # Set trace and check innitial assertions.
         db.set_trace()
         self.assertEqual(db.watchlist['2 + 2'], (False, 4))
@@ -355,6 +370,10 @@ class TracerTester(TestCase):
         self.assertEqual(db.watchlist['local_fn()'], (False, 'local_fn'))
         self.assertEqual(db.watchlist['global_var'], (False, 'global_var'))
         self.assertEqual(db.watchlist['global_fn()'], (False, 'global_fn'))
+
+        # Testing this as a tuple causes strange behavior.
+        self.assertEqual(db.watchlist['too_long()'][0], True)
+        self.assertEqual(db.watchlist['too_long()'][1], too_long_msg)
 
         local_var = 'updated_local_var'  # NOQA
         local_fn = lambda: 'updated_local_fn'  # NOQA
@@ -444,6 +463,7 @@ class TracerTester(TestCase):
         """
         Tests that stdout is stored on the tracer.
         """
+        sys.stdout = stdout = StringIO()
         db = Qdb(cmd_manager=NopCommandManager)
 
         data_to_write = 'stdout'
@@ -454,10 +474,14 @@ class TracerTester(TestCase):
         db.disable()
         self.assertEqual(db.stdout.getvalue(), data_to_write)
 
+        # Assert that the stream was restored.
+        self.assertIs(sys.stdout, stdout)
+
     def test_redirect_stderr(self):
         """
         Tests that stderr is stored on the tracer.
         """
+        sys.stderr = stderr = StringIO()
         db = Qdb(cmd_manager=NopCommandManager)
 
         data_to_write = 'stderr'
@@ -467,6 +491,9 @@ class TracerTester(TestCase):
 
         db.disable()
         self.assertEqual(db.stderr.getvalue(), data_to_write)
+
+        # Assert that the stream was restored.
+        self.assertIs(sys.stderr, stderr)
 
     def test_clear_output_buffers(self):
         """

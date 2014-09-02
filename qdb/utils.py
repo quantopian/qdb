@@ -74,17 +74,13 @@ class QdbTimeout(QdbError):
         self._existing_handler = None
         self.seconds = seconds
         self._running = False
+        self._greenlet = gevent.getcurrent()
 
     def _signal_handler(self, signum, stackframe):
-        """
-        The signal handler that will be used to raise the timeout excpetion.
-        """
         if self._running:
             # Restore the orignal handler in case it times out.
             signal_module.signal(signal_module.SIGALRM, self._existing_handler)
-            if not self._exception:
-                raise self
-            raise self._exception
+            self._greenlet.throw(self._exception or self)
 
     def start(self):
         """

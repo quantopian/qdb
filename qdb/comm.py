@@ -15,7 +15,6 @@
 from abc import ABCMeta, abstractmethod
 import atexit
 from bdb import Breakpoint
-from contextlib import contextmanager
 import errno
 from itertools import takewhile
 import os
@@ -24,6 +23,7 @@ import socket
 from struct import pack, unpack
 import sys
 
+from contextlib2 import contextmanager
 import gipc
 from logbook import Logger
 
@@ -488,7 +488,8 @@ class RemoteCommandManager(CommandManager):
         """
         if not self.payload_check(payload, 'eval'):
             return self.next_command()
-        with capture_output() as (out, err):
+        with capture_output() as (out, err), \
+                self.tracer._new_execution_timeout(payload):
             try:
                 if self.tracer.repr_fn:
                     # Do some some custom single mode magic that lets us call
