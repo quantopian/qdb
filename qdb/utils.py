@@ -13,8 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import ast
+import re
 import signal as signal_module
 import sys
+import tokenize
 
 import gevent
 from uuid import uuid4
@@ -191,20 +193,15 @@ NO_REGISTER_STATEMENTS = {
 }
 
 
+# Matches valid python names.
+NAME_REGEX = re.compile(tokenize.Name)
+
+
 def to_id_char(c, default_char='_'):
     """
     Converts a character to a valid identifier character.
     """
-    if not c or len(c) > 1:
-        raise ValueError('to_id_char expects only a single character')
-
-    ord_ = ord(c)
-
-    # Only ascii letters
-    if (ord_ >= 64 and ord_ <= 90) or (ord_ >= 97 and ord_ <= 122):
-        return c
-
-    return default_char
+    return c if re.match(NAME_REGEX, c) else default_char
 
 
 def isolate_namespace(name):
