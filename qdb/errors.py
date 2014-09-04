@@ -165,3 +165,19 @@ class QdbPrognEndsInStatement(QdbError):
 
     def __repr__(self):
         return "QdbPrognEndsInStatement(src='%s')" % self.src
+
+
+class QdbExecutionTimeout(QdbError):
+    """
+    Signals that user code took too long to execute.
+    """
+    def __init__(self, src, time):
+        self.src = src
+        self.time = time
+
+    def __str__(self):
+        return "Executing '%s' exceeded the max time of %d second%s" \
+            % (self.src, self.time, 's' if self.time == 1 else '')
+
+    def __repr__(self):
+        return 'QdbExecutionTimeout(src=%s, time=%d)' % (self.src, self.time)

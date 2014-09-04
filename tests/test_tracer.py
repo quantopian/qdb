@@ -18,8 +18,14 @@ from unittest import TestCase
 from gevent import Timeout
 from mock import patch
 
+try:
+    from cStringIO import StringIO
+except ImportError:
+    from StringIO import StringIO
+
 from qdb import Qdb
 from qdb.comm import NopCommandManager
+from qdb.errors import QdbExecutionTimeout
 
 from tests import fix_filename
 from tests.utils import QueueCommandManager
@@ -318,13 +324,18 @@ class TracerTester(TestCase):
         Tests the watchlist by evaluating a constant, local function, local
         variable, global function, and global variable.
         """
-        db = Qdb(cmd_manager=NopCommandManager)
+        db = Qdb(cmd_manager=NopCommandManager, execution_timeout=1)
+
+        too_long_msg = db.exception_serializer(
+            QdbExecutionTimeout('too_long()', 1)
+        )
         db.extend_watchlist(
             '2 + 2',
             'local_var',
             'local_fn()',
             'global_var',
-            'global_fn()'
+            'global_fn()',
+            'too_long()',
         )
 
         def new_curframe():
@@ -348,6 +359,10 @@ class TracerTester(TestCase):
         local_var = 'local_var'  # NOQA
         local_fn = lambda: 'local_fn'  # NOQA
 
+        def too_long():
+            while True:
+                pass
+
         # Set trace and check innitial assertions.
         db.set_trace()
         self.assertEqual(db.watchlist['2 + 2'], (False, 4))
@@ -355,6 +370,10 @@ class TracerTester(TestCase):
         self.assertEqual(db.watchlist['local_fn()'], (False, 'local_fn'))
         self.assertEqual(db.watchlist['global_var'], (False, 'global_var'))
         self.assertEqual(db.watchlist['global_fn()'], (False, 'global_fn'))
+
+        # Testing this as a tuple causes strange behavior.
+        self.assertEqual(db.watchlist['too_long()'][0], True)
+        self.assertEqual(db.watchlist['too_long()'][1], too_long_msg)
 
         local_var = 'updated_local_var'  # NOQA
         local_fn = lambda: 'updated_local_fn'  # NOQA
@@ -371,7 +390,7 @@ class TracerTester(TestCase):
 
     def test_conditional_breakpoint(self):
         """
-        Tests conditional breakpoints.
+        Tests valid conditional breakpoints.
         WARNING: This test relies on the relative line numbers inside the test.
         """
         db = Qdb(cmd_manager=QueueCommandManager)
@@ -386,6 +405,110 @@ class TracerTester(TestCase):
         db.set_trace(stop=False)
         while loop_counter < 10:
             loop_counter += 1
+
+    def test_conditional_breakpoint_raises(self):
+        """
+        Tests conditional breakpoints that raise an exception.
+        WARNING: This test relies on the relative line numbers inside the test.
+        """
+        line = None
+        exc = ValueError('lol wut r u doing?')
+        cond = 'raiser()'
+
+        stopped = [False]
+
+        def stop():
+            stopped[0] = True
+            return True  # Execute the assertion.
+
+        db = Qdb(cmd_manager=QueueCommandManager)
+        db.cmd_manager.enqueue(lambda t: stop() and self.assertEqual(line, 1))
+        line_offset = 9
+        # Set a condition that will raise a ValueError.
+        db.set_break(
+            self.filename,
+            sys._getframe().f_lineno + line_offset,
+            cond=cond,
+        )
+        db.set_trace(stop=False)
+
+        def raiser():
+            raise exc
+
+        line = 1
+        line = 2  # This line number is used in the data assertion.
+        line = 3
+
+        db.disable()
+        errors = [e['p'] for e in db.cmd_manager.sent if e['e'] == 'error']
+        self.assertEqual(len(errors), 1)
+
+        error = errors[0]
+        self.assertEqual(error['type'], 'condition')
+
+        negative_line_offset = 13
+        self.assertEqual(
+            error['data'], {
+                'line': sys._getframe().f_lineno - negative_line_offset,
+                'cond': cond,
+                'exc': db.exception_serializer(exc)
+            }
+        )
+        # Make sure we stopped when we raised the exception.
+        self.assertTrue(stopped[0])
+
+    def test_conditional_breakpoint_timeout(self):
+        """
+        Tests conditional breakpoints that cause timeouts.
+        WARNING: This test relies on the relative line numbers inside the test.
+        """
+        stopped = [False]
+
+        def stop():
+            stopped[0] = True
+            return True  # Execute the assertion.
+
+        line = None
+        cond = 'g()'
+
+        db = Qdb(cmd_manager=QueueCommandManager, execution_timeout=1)
+        db.cmd_manager.enqueue(lambda t: stop() and self.assertEqual(line, 1))
+        line_offset = 10
+        # Set a condition that will time out.
+        db.set_break(
+            self.filename,
+            sys._getframe().f_lineno + line_offset,
+            cond='g()',
+        )
+        db.set_trace(stop=False)
+
+        def g():
+            while True:
+                pass
+
+        line = 1
+        line = 2
+        line = 3
+
+        db.disable()
+        errors = [e['p'] for e in db.cmd_manager.sent if e['e'] == 'error']
+        self.assertEqual(len(errors), 1)
+
+        error = errors[0]
+        self.assertEqual(error['type'], 'condition')
+
+        negative_line_offset = 13
+        self.assertEqual(
+            error['data'], {
+                'line': sys._getframe().f_lineno - negative_line_offset,
+                'cond': cond,
+                'exc': db.exception_serializer(
+                    QdbExecutionTimeout(cond, db.execution_timeout)
+                )
+            }
+        )
+        # Make sure we stopped when we raised the exception.
+        self.assertTrue(stopped[0])
 
     def test_temporary_breakpoint(self):
         """
@@ -444,6 +567,7 @@ class TracerTester(TestCase):
         """
         Tests that stdout is stored on the tracer.
         """
+        sys.stdout = stdout = StringIO()
         db = Qdb(cmd_manager=NopCommandManager)
 
         data_to_write = 'stdout'
@@ -454,10 +578,14 @@ class TracerTester(TestCase):
         db.disable()
         self.assertEqual(db.stdout.getvalue(), data_to_write)
 
+        # Assert that the stream was restored.
+        self.assertIs(sys.stdout, stdout)
+
     def test_redirect_stderr(self):
         """
         Tests that stderr is stored on the tracer.
         """
+        sys.stderr = stderr = StringIO()
         db = Qdb(cmd_manager=NopCommandManager)
 
         data_to_write = 'stderr'
@@ -467,6 +595,9 @@ class TracerTester(TestCase):
 
         db.disable()
         self.assertEqual(db.stderr.getvalue(), data_to_write)
+
+        # Assert that the stream was restored.
+        self.assertIs(sys.stderr, stderr)
 
     def test_clear_output_buffers(self):
         """

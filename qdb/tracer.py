@@ -18,19 +18,23 @@ import sys
 import traceback
 from uuid import uuid4
 
+from contextlib2 import ExitStack
+
 try:
     from cStringIO import StringIO
 except ImportError:
     from StringIO import StringIO
+
 try:
     import cPickle as pickle
 except ImportError:
     import pickle
+
 from logbook import Logger, FileHandler
 
 from qdb.comm import RemoteCommandManager, fmt_msg
-from qdb.errors import QdbUnreachableBreakpoint, QdbQuit
-from qdb.utils import default_eval_fn, default_exception_serializer
+from qdb.errors import QdbUnreachableBreakpoint, QdbQuit, QdbExecutionTimeout
+from qdb.utils import Timeout, default_eval_fn, default_exception_serializer
 
 
 log = Logger('Qdb')
@@ -66,7 +70,8 @@ class Qdb(Bdb, object):
                  cmd_manager=None,
                  green=False,
                  repr_fn=None,
-                 log_file=None):
+                 log_file=None,
+                 execution_timeout=None):
         """
         Host and port define the address to connect to.
         The auth_msg is a message that will be sent with the start event to the
@@ -96,6 +101,9 @@ class Qdb(Bdb, object):
         will use signal based timeouts.
         repr_fn is the repr function to use when displaying results. If None,
         use the builtin repr.
+        execution_timeout is the amount of time user code has to execute before
+        being cut short. This is applied to the repl, watchlist and conditional
+        breakpoints. If None, no timeout is applied.
         """
         super(Qdb, self).__init__()
         self.address = host, port
@@ -112,9 +120,12 @@ class Qdb(Bdb, object):
         self.pause_signal = pause_signal if pause_signal else signal.SIGUSR2
         self.uuid = str(uuid or uuid4())
         self.watchlist = {}
+        self.execution_timeout = execution_timeout
         # We need to be able to send stdout back to the user debugging the
         # program. We hold a handle to this in case the program resets stdout.
         if self.redirect_output:
+            self._old_stdout = sys.stdout
+            self._old_stderr = sys.stderr
             self.stdout = StringIO()
             self.stderr = StringIO()
             sys.stdout = self.stdout
@@ -140,6 +151,29 @@ class Qdb(Bdb, object):
         sys.stdout = self.stdout
         sys.stderr = self.stderr
 
+    def restore_output_streams(self):
+        """
+        Restores the original output streams.
+        """
+        if self.redirect_output:
+            sys.stdout = self._old_stdout
+            sys.stderr = self._old_stderr
+
+    def _new_execution_timeout(self, src):
+        """
+        Return a new execution timeout context manager.
+        If not execution timeout is in place, returns ExitStack()
+        """
+        # We use green=False because this could be cpu bound. This will
+        # still throw to the proper greenlet if this is gevented.
+        return (
+            Timeout(
+                self.execution_timeout,
+                QdbExecutionTimeout(src, self.execution_timeout),
+                green=False
+            ) if self.execution_timeout else ExitStack()
+        )
+
     def set_default_file(self, filename):
         """
         Safely sets the new default file.
@@ -152,7 +186,10 @@ class Qdb(Bdb, object):
         """
         # The line - 1 is so that querying line 1 gives us the first line in
         # the file.
-        return self._get_file_lines(filename)[line - 1]
+        try:
+            return self._get_file_lines(filename)[line - 1]
+        except IndexError:
+            return 'No source available for this line.'
 
     def get_file(self, filename):
         """
@@ -275,12 +312,18 @@ class Qdb(Bdb, object):
         id_ = lambda n: n  # Why is this NOT a builtin?
         for expr in self.watchlist:
             try:
-                self.watchlist[expr] = (
-                    False,
-                    (self.repr_fn or id_)(self.eval_fn(expr, self.curframe)),
-                )
+                with self._new_execution_timeout(expr):
+                    self.watchlist[expr] = (
+                        False,
+                        (self.repr_fn or id_)(
+                            self.eval_fn(expr, self.curframe)
+                        )
+                    )
             except Exception as e:
-                self.watchlist[expr] = True, self.exception_serializer(e)
+                self.watchlist[expr] = (
+                    True,
+                    self.exception_serializer(e)
+                )
 
     def effective(self, file, line, stackframe):
         """
@@ -309,12 +352,12 @@ class Qdb(Bdb, object):
                 # Ignore count applies only to those bpt hits where the
                 # condition evaluates to true.
                 try:
-                    val = self.eval_fn(breakpoint.cond, stackframe, 'eval')
-                    if val:
-                        if breakpoint.ignore > 0:
-                            breakpoint.ignore = breakpoint.ignore - 1
-                        else:
-                            return breakpoint, True
+                    with self._new_execution_timeout(breakpoint.cond):
+                        val = self.eval_fn(
+                            breakpoint.cond,
+                            stackframe,
+                            'eval'
+                        )
                 except Exception as e:
                     # Send back a message to let the user know there was an
                     # issue with their breakpoint.
@@ -328,6 +371,12 @@ class Qdb(Bdb, object):
                     # Return this breakpoint to be safe. The user will be
                     # stopped here so that they can fix the breakpoint.
                     return breakpoint, False
+
+                if val:
+                    if breakpoint.ignore > 0:
+                        breakpoint.ignore = breakpoint.ignore - 1
+                    else:
+                        return breakpoint, True
         return None, False
 
     def break_here(self, stackframe):
@@ -425,8 +474,6 @@ class Qdb(Bdb, object):
         Sets the quitting state and restores the program state.
         """
         self.quitting = True
-        # Restore stdout to the true stdout.
-        sys.stdout = sys.__stdout__
 
     def disable(self, mode='soft'):
         """
@@ -436,7 +483,6 @@ class Qdb(Bdb, object):
             if mode == 'soft':
                 self.clear_all_breaks()
                 self.set_continue()
-                sys.stdout = sys.__stdout__
                 # Remove this instance so that new ones may be created.
                 self.__class__._instance = None
             elif mode == 'hard':
@@ -444,6 +490,7 @@ class Qdb(Bdb, object):
             else:
                 raise ValueError("mode must be 'hard' or 'soft'")
         finally:
+            self.restore_output_streams()
             if self.log_handler:
                 self.log_handler.pop_application()
             self.cmd_manager.stop()
