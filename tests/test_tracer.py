@@ -412,43 +412,103 @@ class TracerTester(TestCase):
         WARNING: This test relies on the relative line numbers inside the test.
         """
         line = None
+        exc = ValueError('lol wut r u doing?')
+        cond = 'raiser()'
+
+        stopped = [False]
+
+        def stop():
+            stopped[0] = True
+            return True  # Execute the assertion.
+
         db = Qdb(cmd_manager=QueueCommandManager)
-        db.cmd_manager.enqueue(lambda t: self.assertEqual(line, 1))
-        line_offset = 5
+        db.cmd_manager.enqueue(lambda t: stop() and self.assertEqual(line, 1))
+        line_offset = 9
         # Set a condition that will raise a ValueError.
         db.set_break(
             self.filename,
             sys._getframe().f_lineno + line_offset,
-            cond='raise ValueError("lolwut r u doing?")',
+            cond=cond,
         )
         db.set_trace(stop=False)
+
+        def raiser():
+            raise exc
+
         line = 1
-        line = 2
+        line = 2  # This line number is used in the data assertion.
         line = 3
+
+        db.disable()
+        errors = [e['p'] for e in db.cmd_manager.sent if e['e'] == 'error']
+        self.assertEqual(len(errors), 1)
+
+        error = errors[0]
+        self.assertEqual(error['type'], 'condition')
+
+        negative_line_offset = 13
+        self.assertEqual(
+            error['data'], {
+                'line': sys._getframe().f_lineno - negative_line_offset,
+                'cond': cond,
+                'exc': db.exception_serializer(exc)
+            }
+        )
+        # Make sure we stopped when we raised the exception.
+        self.assertTrue(stopped[0])
 
     def test_conditional_breakpoint_timeout(self):
         """
         Tests conditional breakpoints that cause timeouts.
         WARNING: This test relies on the relative line numbers inside the test.
         """
-        def g():
-            while True:
-                pass
+        stopped = [False]
+
+        def stop():
+            stopped[0] = True
+            return True  # Execute the assertion.
 
         line = None
+        cond = 'g()'
+
         db = Qdb(cmd_manager=QueueCommandManager, execution_timeout=1)
-        db.cmd_manager.enqueue(lambda t: self.assertEqual(line, 1))
-        line_offset = 5
-        # Set a condition that will raise a ValueError.
+        db.cmd_manager.enqueue(lambda t: stop() and self.assertEqual(line, 1))
+        line_offset = 10
+        # Set a condition that will time out.
         db.set_break(
             self.filename,
             sys._getframe().f_lineno + line_offset,
             cond='g()',
         )
         db.set_trace(stop=False)
+
+        def g():
+            while True:
+                pass
+
         line = 1
         line = 2
         line = 3
+
+        db.disable()
+        errors = [e['p'] for e in db.cmd_manager.sent if e['e'] == 'error']
+        self.assertEqual(len(errors), 1)
+
+        error = errors[0]
+        self.assertEqual(error['type'], 'condition')
+
+        negative_line_offset = 13
+        self.assertEqual(
+            error['data'], {
+                'line': sys._getframe().f_lineno - negative_line_offset,
+                'cond': cond,
+                'exc': db.exception_serializer(
+                    QdbExecutionTimeout(cond, db.execution_timeout)
+                )
+            }
+        )
+        # Make sure we stopped when we raised the exception.
+        self.assertTrue(stopped[0])
 
     def test_temporary_breakpoint(self):
         """
