@@ -469,18 +469,21 @@ if __name__ == '__main__':
         type=str,
         metavar='ADDR-FMT',
         help='The websocket address format string. containing {{uuid}}',
+        default='ws://localhost:8002/{uuid}',
     )
     argparser.add_argument(
         '-u', '--uuid',
         type=str,
         metavar='UUID',
-        help='The session uuid that you wish to connect to.'
+        help='The session uuid that you wish to connect to.',
+        default='qdb',
     )
     argparser.add_argument(
         '-a', '--auth-msg',
         type=str,
         metavar='AUTH-MSG',
-        help='The authentication message to send with the start event.'
+        help='The authentication message to send with the start event.',
+        default='',
     )
     args = argparser.parse_args()
     repl = QdbRepl()
@@ -492,4 +495,7 @@ if __name__ == '__main__':
     try:
         repl.cmdloop()
     finally:
-        os.remove(repl.filename)  # Cleans up the tmp output file.
+        try:
+            os.remove(repl.filename)  # Cleans up the tmp output file.
+        except (AttributeError, OSError):
+            pass

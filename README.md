@@ -20,7 +20,7 @@ of application. qdb provides a terminal client and emacs mode for this.
 
 The tracer is the main debugging process. This is the actual code that the user
 wishes to debug. Communication here is through a socket sending pickle'd
-dictionaries representing only the valid json messages sent to the server from
+dictionaries representing only the valid messages sent to the server from
 the client. A single tracer may have multiple clients connected to it.
 
 
@@ -29,62 +29,71 @@ tracer. The server is responsible for validating that the messages from the
 clients are well formed and routing them to the tracer. A single server may
 manage multiple tracers, so it is responsible for making sure that connections
 are routed to the proper place. The server can clean up tracer processes whose
-clients have become inactive if the server manager decides.
+clients have become inactive if the server manager decides. The server may also
+impose authentication rules to allow or disallow some connections.
 
 
+### Getting started ###
 
-### json protocol ###
+To debug a process with qdb locally, first you must start the server process.
 
-All communication to the server is through a structured protocol of the form:
+The easiest way to do this is to execute:
 
-    {
-        "e": event,
-        "p": payload
-    }
+    $ python -m qdb.server
 
-The event is the type of the message, and the payload is any parameter or data
-that is associated with this packet. Not all messages require a payload.
-For example, the client can send the command:
+which will start up a server that accepts tracer connections on port 8001, and
+client connections on port 8002. There are a few options that may be passed to
+the server from the command line, to see a full list, run:
 
-    {
-        "e": "step"
-    }
-
-Which steps into the next expression on the tracer. The client may also send:
-
-    {
-        "e": "eval"
-        "p": "a + b"
-    }
-
-This command is equivalent to evaluating the code `a + b` in the current stack
-frame.
-
-The server will always send back data that is formatted in this way.
-
-For a complete overview of the communication protocol, see docs/comm.md
+    $ python -m qdb.server --help
 
 
-### Modularity ###
+Now that you have a server running, you may run a process under qdb.
+As an example, try saving the following as qdb_test.py:
 
-qdb is designed with modularity in mind. For this reason, many components of the
-qdb system may be swapped out with user defined alternatives to help blend qdb
-into larger projects. For example, the qdb server can have the websocket server
-swapped out to make it work as a route point in a larger flask project.
-
-While qdb provides a minimal client, the beauty in the websocket / json
-combination is that it allows users to plug in their own client, so long as
-it can make the connection and interpret the commands.
+```python
+import qdb
 
 
+def f():
+    in_f = True
+    return 'getting out of f'
 
-### Security ###
 
-qdb provides multiple features that are security oriented. Because it is a
-remote debugger, the owner of the hardware running the tracer or server may
-not want the user to do things. For example, the the server may define an
-authentication function that reads the authentication message out of the
-start command and either accepts or denies that websocket. Also, the tracer
-may define their own eval function to use when evaluating repl code or the
-condition of conditional breakpoints. This lets the tracer deny potentially
-dangerous code if it so wishes.
+def main():
+    qdb.set_trace(
+        uuid='qdb',
+        host='localhost',
+        port=8001,
+    )
+    mutable_object = {}
+    print 'Hello world!'
+    f()
+    print mutable_object
+
+
+if __name__ == '__main__':
+    main()
+```
+
+Then, invoke the program as you normally would with:
+
+    $ python qdb_test.py
+
+Finally, you will need to connect your client to the server so that you can
+actually debug the program. To connect, run the provided client found in the
+client directory with:
+
+    $ qdb-cli
+
+Before you are finished, you will need to get the output from the program, in a
+seperate terminal, run:
+
+    $ tail -f /tmp/qdb/qdb
+
+This will be the realtime output from the debugger.
+
+
+You are now ready to debug your process, issue the `help` command in the repl
+to see a list of available commands and functions, or begin evaluating python
+code in the context of the other process.

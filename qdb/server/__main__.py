@@ -100,7 +100,7 @@ if __name__ == '__main__':
         type=str,
         metavar='LOG-FILE',
         help='The path to the logging output file. If omitted, logging goes to'
-        'stderr.'
+        ' stderr.'
     )
     args = vars(argparser.parse_args())
     log = args.pop('log', None)
