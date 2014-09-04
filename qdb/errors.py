@@ -149,3 +149,19 @@ class QdbAuthenticationError(QdbError):
 
     def __repr__(self):
         return 'QdbInvalidRoute(%s)' % self.message
+
+
+class QdbPrognEndsInStatement(QdbError):
+    """
+    Signals that a progn call ended in a statment and thus has no
+    return value.
+    """
+    def __init__(self, src):
+        self.src = src
+
+    def __str__(self):
+        return 'Cannot call progn with src="%s" as this ends in a statement.' \
+            % self.src
+
+    def __repr__(self):
+        return "QdbPrognEndsInStatement(src='%s')" % self.src

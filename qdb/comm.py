@@ -33,8 +33,9 @@ from qdb.errors import (
     QdbCommunicationError,
     QdbUnreachableBreakpoint,
     QdbAuthenticationError,
+    QdbPrognEndsInStatement,
 )
-from qdb.utils import Timeout
+from qdb.utils import Timeout, progn
 
 try:
     from cStringIO import StringIO
@@ -489,12 +490,26 @@ class RemoteCommandManager(CommandManager):
             return self.next_command()
         with capture_output() as (out, err):
             try:
-                self.tracer.eval_fn(
-                    payload,
-                    self.tracer.curframe,
-                    'single',
-                    exec_=True,
-                )
+                if self.tracer.repr_fn:
+                    # Do some some custom single mode magic that lets us call
+                    # the repr function on the last expr.
+                    try:
+                        print self.tracer.repr_fn(
+                            progn(
+                                payload,
+                                self.tracer.eval_fn,
+                                self.tracer.curframe
+                            )
+                        )
+                    except QdbPrognEndsInStatement:
+                        # Statements have no value to print.
+                        pass
+                else:
+                    self.tracer.eval_fn(
+                        payload,
+                        self.tracer.curframe,
+                        'single',
+                    )
             except Exception as e:
                 self.send_print(
                     payload,

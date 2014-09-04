@@ -22,36 +22,18 @@ try:
     from cStringIO import StringIO
 except ImportError:
     from StringIO import StringIO
-
-from logbook import Logger, FileHandler
-
-from qdb.comm import RemoteCommandManager, fmt_msg
-from qdb.errors import QdbUnreachableBreakpoint, QdbQuit
-
 try:
     import cPickle as pickle
 except ImportError:
     import pickle
+from logbook import Logger, FileHandler
+
+from qdb.comm import RemoteCommandManager, fmt_msg
+from qdb.errors import QdbUnreachableBreakpoint, QdbQuit
+from qdb.utils import default_eval_fn, default_exception_serializer
+
 
 log = Logger('Qdb')
-
-
-def default_eval_fn(src, stackframe, mode='eval', exec_=False):
-    """
-    Wrapper around vanilla eval with no safety.
-    """
-    code = compile(src, '<string>', mode)
-    if exec_:
-        exec(code, stackframe.f_globals, stackframe.f_locals)
-        return
-    return eval(code, stackframe.f_globals, stackframe.f_locals)
-
-
-def default_exception_serializer(exception):
-    """
-    The default exception serializer for user exceptions in eval.
-    """
-    return '%s: %s' % (type(exception).__name__, str(exception))
 
 
 class Qdb(Bdb, object):
@@ -83,6 +65,7 @@ class Qdb(Bdb, object):
                  uuid=None,
                  cmd_manager=None,
                  green=False,
+                 repr_fn=None,
                  log_file=None):
         """
         Host and port define the address to connect to.
@@ -111,6 +94,8 @@ class Qdb(Bdb, object):
         (host, port).
         If green is True, this will use gevent safe timeouts, otherwise this
         will use signal based timeouts.
+        repr_fn is the repr function to use when displaying results. If None,
+        use the builtin repr.
         """
         super(Qdb, self).__init__()
         self.address = host, port
@@ -122,6 +107,7 @@ class Qdb(Bdb, object):
         self._file_cache = {}
         self.redirect_output = redirect_output
         self.retry_attepts = retry_attepts
+        self.repr_fn = repr_fn
         self.skip_fn = skip_fn or (lambda _: False)
         self.pause_signal = pause_signal if pause_signal else signal.SIGUSR2
         self.uuid = str(uuid or uuid4())
@@ -286,13 +272,15 @@ class Qdb(Bdb, object):
         Updates the watchlist by evaluating all the watched expressions in
         our current frame.
         """
+        id_ = lambda n: n  # Why is this NOT a builtin?
         for expr in self.watchlist:
             try:
-                self.watchlist[expr] = (False,
-                                        self.eval_fn(expr, self.curframe))
+                self.watchlist[expr] = (
+                    False,
+                    (self.repr_fn or id_)(self.eval_fn(expr, self.curframe)),
+                )
             except Exception as e:
-                self.watchlist[expr] = (True,
-                                        self.exception_serializer(e))
+                self.watchlist[expr] = True, self.exception_serializer(e)
 
     def effective(self, file, line, stackframe):
         """

@@ -12,11 +12,35 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import ast
+import re
 import signal as signal_module
+import sys
+import tokenize
 
 import gevent
+from uuid import uuid4
 
-from qdb.errors import QdbError
+from qdb.errors import QdbError, QdbPrognEndsInStatement
+
+
+def default_eval_fn(src, stackframe, mode='eval', original=None):
+    """
+    Wrapper around vanilla eval with no safety.
+    """
+    code = compile(src, '<stdin>', mode)
+    if mode in ['exec', 'single']:
+        exec(code, stackframe.f_globals, stackframe.f_locals)
+        return
+
+    return eval(code, stackframe.f_globals, stackframe.f_locals)
+
+
+def default_exception_serializer(exception):
+    """
+    The default exception serializer for user exceptions in eval.
+    """
+    return '%s: %s' % (type(exception).__name__, str(exception))
 
 
 class QdbTimeout(QdbError):
@@ -142,3 +166,146 @@ class _TimeoutMagic(tuple):
 # Timeout is capitalized because in almost all use cases you can think of
 # this as a class, even though there is a little more going on.
 Timeout = _TimeoutMagic([gevent.Timeout, QdbTimeout])
+
+
+# Don't register the results from these nodes.
+NO_REGISTER_STATEMENTS = {
+    # Classes and functions.
+    ast.FunctionDef,
+    ast.ClassDef,
+    ast.Return,
+
+    # Assign and delete.
+    ast.Delete,
+    ast.Assign,
+    ast.AugAssign,
+
+    ast.Print,
+
+    # Imports
+    ast.Import,
+    ast.ImportFrom,
+
+    ast.Raise,
+
+    ast.Global,
+    ast.Pass,
+}
+
+
+# Matches valid python names.
+NAME_REGEX = re.compile(tokenize.Name)
+
+
+def to_id_char(c, default_char='_'):
+    """
+    Converts a character to a valid identifier character.
+    """
+    return c if re.match(NAME_REGEX, c) else default_char
+
+
+def isolate_namespace(name):
+    """
+    Isolates name from the user's namespace by prefixing it with a pseudo
+    random string that is still a valid identifier.
+    """
+    name = ''.join(map(to_id_char, name))
+    return 'a%s%s' % (uuid4().hex, name)
+
+
+def register_last_expr(tree, register):
+    """
+    Registers the last expression as register in the context of an AST.
+    tree may either be a list of nodes, or an ast node with a body.
+    Returns the newly modified structure AND mutates the original.
+    """
+    if isinstance(tree, list):
+        if not tree:
+            # Empty body.
+            return tree
+        # Allows us to use cases like directly passing orelse bodies.
+        last_node = tree[-1]
+    else:
+        last_node = tree.body[-1]
+    if type(last_node) in NO_REGISTER_STATEMENTS:
+        return tree
+
+    def mk_register_node(final_node):
+        return ast.Expr(
+            value=ast.Call(
+                func=ast.Name(
+                    id=register,
+                    ctx=ast.Load(),
+                ),
+                args=[
+                    final_node.value,
+                ],
+                keywords=[],
+                starargs=None,
+                kwargs=None,
+            )
+        )
+
+    if hasattr(last_node, 'body'):
+        # Deep inspect the body of the nodes.
+        register_last_expr(last_node, register)
+
+        # Try to register in all the body types.
+        try:
+            register_last_expr(last_node.orelse, register)
+        except AttributeError:
+            pass
+        try:
+            for handler in last_node.handlers:
+                register_last_expr(handler, register)
+        except AttributeError:
+            pass
+        try:
+            register_last_expr(last_node.finalbody, register)
+        except AttributeError:
+            pass
+    else:
+        # Nodes with no body require no recursive inspection.
+        tree.body[-1] = mk_register_node(last_node)
+
+    return ast.fix_missing_locations(tree)
+
+
+def progn(src, eval_fn=None, stackframe=None):
+    """
+    Evaluate all expressions and statments in src, returns the result of the
+    last expression or raises a QdbPrognEndsInStatement if the last thing is a
+    statement.
+    eval_fn is the function to evaluate the src with and should conform to the
+    same standards as the Qdb class's eval_fn param.
+    stackframe is the context to evaluate src in, if None, it will be the
+    calling stackframe.
+    """
+    eval_fn = eval_fn or default_eval_fn
+    register_name = isolate_namespace('register')
+    code = register_last_expr(ast.parse(src), register_name)
+
+    stackframe = stackframe or sys._getframe().f_back
+    store = {}
+
+    def register(expr):
+        """
+        Store the last expression's result.
+        """
+        store['expr'] = expr
+        return expr
+
+    # Add the register function to the namespace.
+    stackframe.f_globals[register_name] = register
+    try:
+        eval_fn(code, stackframe, 'exec', original=src)
+    finally:
+        # Always remove the register function from the namespace.
+        # This is to not fill the namespace after mutliple calls to progn.
+        del stackframe.f_globals[register_name]
+    try:
+        # Attempt to retrieve the last expression.
+        return store['expr']
+    except KeyError:
+        # There was no final expression.
+        raise QdbPrognEndsInStatement(src)
