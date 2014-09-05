@@ -1,5 +1,6 @@
 # qdb #
 
+
 Quantopian Remote Debugger for Python
 
 
@@ -97,3 +98,33 @@ This will be the realtime output from the debugger.
 You are now ready to debug your process, issue the `help` command in the repl
 to see a list of available commands and functions, or begin evaluating python
 code in the context of the other process.
+
+
+### Requirements ###
+
+To download the requirements, you can simply issue:
+
+    $ make requirements
+
+assuming you have pip installed.
+
+To view the development and normal requirements, see etc/requirements_dev.txt
+and etc/requirements.txt.
+
+
+### Style ##
+To ensure that changes and patches are focused on behavior changes, the qdb
+codebase adheres to both PEP-8, http://www.python.org/dev/peps/pep-0008/, and
+pyflakes, https://launchpad.net/pyflakes/.
+
+The maintainers check the code using
+the flake8 script, https://bitbucket.org/tarek/flake8/wiki/Home, which is
+included in the etc/requirements_dev.txt.
+
+Before submitting patches or pull requests, please ensure that running
+`make style` and `make test` both pass.
+
+
+### Contact ###
+
+For other questions, please contact opensource@quantopian.com.
