@@ -514,13 +514,13 @@ class RemoteCommandManager(CommandManager):
             except Exception as e:
                 self.send_print(
                     payload,
-                    True,
+                    type(e).__name__,
                     self.tracer.exception_serializer(e)
                 )
             else:
                 out_msg = out.getvalue()[:-1] if out.getvalue() \
                     and out.getvalue()[-1] == '\n' else out.getvalue()
-                self.send_print(payload, False, out_msg)
+                self.send_print(payload, None, out_msg)
 
         self.tracer.update_watchlist()
         self.send_watchlist()

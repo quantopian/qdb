@@ -298,12 +298,12 @@ class RemoteCommandManagerTester(TestCase):
         self.assertTrue(pause_called)
 
     @parameterized.expand([
-        ('2 + 2', False, '4'),
-        ('print "test"', False, 'test'),
-        ('ValueError("test")', False, "ValueError('test',)"),
-        ('raise ValueError("test")', True, 'ValueError: test'),
-        ('[][10]', True, 'IndexError: list index out of range'),
-        ('{}["test"]', True, "KeyError: 'test'"),
+        ('2 + 2', None, '4'),
+        ('print "test"', None, 'test'),
+        ('ValueError("test")', None, "ValueError('test',)"),
+        ('raise ValueError("test")', 'ValueError', 'ValueError: test'),
+        ('[][10]', 'IndexError', 'IndexError: list index out of range'),
+        ('{}["test"]', 'KeyError', "KeyError: 'test'"),
     ])
     def test_eval_results(self, input_, exc, output):
         """
