@@ -344,17 +344,17 @@ class TracerTester(TestCase):
             This changes the curframe of the tracer to eval the watchlist with
             a new set of locals.
             """
-            self.assertEqual(db.watchlist['2 + 2'], (False, 4))
+            self.assertEqual(db.watchlist['2 + 2'], (None, 4))
             self.assertEqual(
                 db.watchlist['local_var'],
-                (True, "NameError: name 'local_var' is not defined")
+                ('NameError', "NameError: name 'local_var' is not defined")
             )
             self.assertEqual(
                 db.watchlist['local_fn()'],
-                (True, "NameError: name 'local_fn' is not defined")
+                ('NameError', "NameError: name 'local_fn' is not defined")
             )
-            self.assertEqual(db.watchlist['global_var'], (False, 'global_var'))
-            self.assertEqual(db.watchlist['global_fn()'], (False, 'global_fn'))
+            self.assertEqual(db.watchlist['global_var'], (None, 'global_var'))
+            self.assertEqual(db.watchlist['global_fn()'], (None, 'global_fn'))
 
         local_var = 'local_var'  # NOQA
         local_fn = lambda: 'local_fn'  # NOQA
@@ -365,26 +365,26 @@ class TracerTester(TestCase):
 
         # Set trace and check innitial assertions.
         db.set_trace()
-        self.assertEqual(db.watchlist['2 + 2'], (False, 4))
-        self.assertEqual(db.watchlist['local_var'], (False, 'local_var'))
-        self.assertEqual(db.watchlist['local_fn()'], (False, 'local_fn'))
-        self.assertEqual(db.watchlist['global_var'], (False, 'global_var'))
-        self.assertEqual(db.watchlist['global_fn()'], (False, 'global_fn'))
+        self.assertEqual(db.watchlist['2 + 2'], (None, 4))
+        self.assertEqual(db.watchlist['local_var'], (None, 'local_var'))
+        self.assertEqual(db.watchlist['local_fn()'], (None, 'local_fn'))
+        self.assertEqual(db.watchlist['global_var'], (None, 'global_var'))
+        self.assertEqual(db.watchlist['global_fn()'], (None, 'global_fn'))
 
         # Testing this as a tuple causes strange behavior.
-        self.assertEqual(db.watchlist['too_long()'][0], True)
+        self.assertEqual(db.watchlist['too_long()'][0], 'QdbExecutionTimeout')
         self.assertEqual(db.watchlist['too_long()'][1], too_long_msg)
 
         local_var = 'updated_local_var'  # NOQA
         local_fn = lambda: 'updated_local_fn'  # NOQA
 
-        self.assertEqual(db.watchlist['2 + 2'], (False, 4))
-        self.assertEqual(db.watchlist['local_var'], (False,
+        self.assertEqual(db.watchlist['2 + 2'], (None, 4))
+        self.assertEqual(db.watchlist['local_var'], (None,
                                                      'updated_local_var'))
-        self.assertEqual(db.watchlist['local_fn()'], (False,
+        self.assertEqual(db.watchlist['local_fn()'], (None,
                                                       'updated_local_fn'))
-        self.assertEqual(db.watchlist['global_var'], (False, 'global_var'))
-        self.assertEqual(db.watchlist['global_fn()'], (False, 'global_fn'))
+        self.assertEqual(db.watchlist['global_var'], (None, 'global_var'))
+        self.assertEqual(db.watchlist['global_fn()'], (None, 'global_fn'))
 
         new_curframe()
 
@@ -451,7 +451,8 @@ class TracerTester(TestCase):
             error['data'], {
                 'line': sys._getframe().f_lineno - negative_line_offset,
                 'cond': cond,
-                'exc': db.exception_serializer(exc)
+                'exc': type(exc).__name__,
+                'output': db.exception_serializer(exc),
             }
         )
         # Make sure we stopped when we raised the exception.
@@ -497,14 +498,14 @@ class TracerTester(TestCase):
         error = errors[0]
         self.assertEqual(error['type'], 'condition')
 
-        negative_line_offset = 13
+        negative_line_offset = 14
+        exc = QdbExecutionTimeout(cond, db.execution_timeout)
         self.assertEqual(
             error['data'], {
                 'line': sys._getframe().f_lineno - negative_line_offset,
                 'cond': cond,
-                'exc': db.exception_serializer(
-                    QdbExecutionTimeout(cond, db.execution_timeout)
-                )
+                'exc': type(exc).__name__,
+                'output': db.exception_serializer(exc),
             }
         )
         # Make sure we stopped when we raised the exception.

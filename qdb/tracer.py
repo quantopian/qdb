@@ -314,14 +314,14 @@ class Qdb(Bdb, object):
             try:
                 with self._new_execution_timeout(expr):
                     self.watchlist[expr] = (
-                        False,
+                        None,
                         (self.repr_fn or id_)(
                             self.eval_fn(expr, self.curframe)
                         )
                     )
             except Exception as e:
                 self.watchlist[expr] = (
-                    True,
+                    type(e).__name__,
                     self.exception_serializer(e)
                 )
 
@@ -365,7 +365,8 @@ class Qdb(Bdb, object):
                         'condition', {
                             'cond': breakpoint.cond,
                             'line': line,
-                            'exc': self.exception_serializer(e),
+                            'exc': type(e).__name__,
+                            'output': self.exception_serializer(e),
                         }
                     )
                     # Return this breakpoint to be safe. The user will be
