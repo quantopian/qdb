@@ -35,6 +35,13 @@ except ImportError:
 
 from qdb.comm import fmt_msg, fmt_err_msg
 
+
+# errno's that are safe to ignore when killing a session.
+safe_errnos = (
+    errno.EBADF,
+    errno.ECONNRESET,
+)
+
 # Symbolic constant for the attach_timeout case.
 ALLOW_ORPHANS = 0
 
@@ -379,7 +386,7 @@ class SessionStore(object):
             try:
                 client.close()
             except WebSocketError as e:
-                if str(e) != 'Socket is dead' or e.errno != errno.EBADF:
+                if str(e) != 'Socket is dead' or e.errno not in safe_errnos:
                     log.exception(
                         'Exception caught while killing client for '
                         'session %s:' % uuid
