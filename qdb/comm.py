@@ -489,7 +489,8 @@ class RemoteCommandManager(CommandManager):
         if not self.payload_check(payload, 'eval'):
             return self.next_command()
         with capture_output() as (out, err), \
-                self.tracer._new_execution_timeout(payload):
+                self.tracer._new_execution_timeout(payload), \
+                self.tracer.inject_default_namespace() as stackframe:
             try:
                 if self.tracer.repr_fn:
                     # Do some some custom single mode magic that lets us call
@@ -499,7 +500,7 @@ class RemoteCommandManager(CommandManager):
                             progn(
                                 payload,
                                 self.tracer.eval_fn,
-                                self.tracer.curframe
+                                stackframe,
                             )
                         )
                     except QdbPrognEndsInStatement:
@@ -508,7 +509,7 @@ class RemoteCommandManager(CommandManager):
                 else:
                     self.tracer.eval_fn(
                         payload,
-                        self.tracer.curframe,
+                        stackframe,
                         'single',
                     )
             except Exception as e:

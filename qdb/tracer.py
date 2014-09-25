@@ -18,7 +18,7 @@ import sys
 import traceback
 from uuid import uuid4
 
-from contextlib2 import ExitStack
+from contextlib2 import ExitStack, contextmanager
 
 try:
     from cStringIO import StringIO
@@ -60,6 +60,7 @@ class Qdb(Bdb, object):
                  port=8001,
                  auth_msg='',
                  default_file=None,
+                 default_namespace=None,
                  eval_fn=None,
                  exception_serializer=None,
                  skip_fn=None,
@@ -108,6 +109,7 @@ class Qdb(Bdb, object):
         super(Qdb, self).__init__()
         self.address = host, port
         self.set_default_file(default_file)
+        self.default_namespace = default_namespace or {}
         self.exception_serializer = exception_serializer or \
             default_exception_serializer
         self.eval_fn = eval_fn or default_eval_fn
@@ -312,11 +314,12 @@ class Qdb(Bdb, object):
         id_ = lambda n: n  # Why is this NOT a builtin?
         for expr in self.watchlist:
             try:
-                with self._new_execution_timeout(expr):
+                with self._new_execution_timeout(expr), \
+                        self.inject_default_namespace() as stackframe:
                     self.watchlist[expr] = (
                         None,
                         (self.repr_fn or id_)(
-                            self.eval_fn(expr, self.curframe)
+                            self.eval_fn(expr, stackframe)
                         )
                     )
             except Exception as e:
@@ -352,10 +355,11 @@ class Qdb(Bdb, object):
                 # Ignore count applies only to those bpt hits where the
                 # condition evaluates to true.
                 try:
-                    with self._new_execution_timeout(breakpoint.cond):
+                    with self._new_execution_timeout(breakpoint.cond), \
+                            self.inject_default_namespace(stackframe) as frame:
                         val = self.eval_fn(
                             breakpoint.cond,
-                            stackframe,
+                            frame,
                             'eval'
                         )
                 except Exception as e:
@@ -522,3 +526,30 @@ class Qdb(Bdb, object):
         else:
             self.set_continue()
         sys.settrace(self.trace_dispatch)
+
+    @contextmanager
+    def inject_default_namespace(self, stackframe=None):
+        """
+        Adds the default namespace to the frame, or if no frame is provided,
+        self.curframe is used.
+        """
+        stackframe = stackframe or self.curframe
+        to_remove = set()
+        for k, v in self.default_namespace.iteritems():
+            if k not in stackframe.f_globals:
+                # Only add the default things if the name is unbound.
+                stackframe.f_globals[k] = v
+                to_remove.add(k)
+
+        try:
+            yield stackframe
+        finally:
+            for k in to_remove:
+                try:
+                    del stackframe.f_globals[k]
+                except IndexError:
+                    # The body of this manager might have del'd this.
+                    pass
+
+            # Prevent exceptions from generating ref cycles.
+            del stackframe
