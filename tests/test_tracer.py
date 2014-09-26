@@ -623,3 +623,54 @@ class TracerTester(TestCase):
         # Assert that the data actually got cleared.
         self.assertEqual(db.stdout.getvalue(), '')
         self.assertEqual(db.stderr.getvalue(), '')
+
+    def test_inject_default_ns(self):
+        """
+        Tests adding a default namespace to a frame.
+        """
+        ns = {'a': 1, 'b': 2}
+
+        # rip pyflakes
+        with Qdb(cmd_manager=NopCommandManager, default_namespace=ns) as db, \
+                db.inject_default_namespace(sys._getframe()):
+            self.assertEqual(a, 1)  # NOQA
+            self.assertEqual(b, 2)  # NOQA
+
+        # Assert that the namespace was cleaned.
+        with self.assertRaises(NameError):
+            a  # NOQA
+
+        with self.assertRaises(NameError):
+            b  # NOQA
+
+    def test_inject_default_ns_curframe(self):
+        """
+        Tests adding a default namespace to the curframe.
+        """
+        ns = {'a': 1, 'b': 2}
+
+        # rip pyflakes
+        with Qdb(cmd_manager=NopCommandManager, default_namespace=ns) as db:
+            db.curframe = sys._getframe()
+            with db.inject_default_namespace():
+                self.assertEqual(a, 1)  # NOQA
+                self.assertEqual(b, 2)  # NOQA
+
+            with self.assertRaises(NameError):
+                a  # NOQA
+
+            with self.assertRaises(NameError):
+                b  # NOQA
+
+    def test_inject_default_ns_no_trample(self):
+        """
+        Tests adding the default namespace does not override a defined name.
+        """
+        ns = {'a': 1, 'b': 2}
+
+        with Qdb(cmd_manager=NopCommandManager, default_namespace=ns) as db, \
+                db.inject_default_namespace(sys._getframe()):
+            a = 'a'
+            b = 'b'
+            self.assertEqual(a, 'a')
+            self.assertEqual(b, 'b')
