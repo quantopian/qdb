@@ -100,13 +100,21 @@ to see a list of available commands and functions, or begin evaluating python
 code in the context of the other process.
 
 
+## Contributions ##
+
+If you would like to contribute, please see our
+[Contribution Requests](https://github.com/quantopian/qdb/wiki/
+Contribution-Requests).
+
+
 ### Requirements ###
 
 To download the requirements, you can simply issue:
 
     $ make requirements
 
-assuming you have pip installed.
+assuming you have pip installed. You will most likely want to install into a
+virtualenv.
 
 To view the development and normal requirements, see etc/requirements_dev.txt
 and etc/requirements.txt.
@@ -123,6 +131,11 @@ included in the etc/requirements_dev.txt.
 
 Before submitting patches or pull requests, please ensure that running
 `make style` and `make test` both pass.
+
+
+## Source ##
+
+The source for qdb is hosted at: https://github.com/quantopian/qdb
 
 
 ### Contact ###
