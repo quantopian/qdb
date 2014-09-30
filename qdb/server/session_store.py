@@ -40,6 +40,7 @@ from qdb.comm import fmt_msg, fmt_err_msg
 safe_errnos = (
     errno.EBADF,
     errno.ECONNRESET,
+    errno.EPIPE,
 )
 
 # Symbolic constant for the attach_timeout case.
@@ -398,8 +399,7 @@ class SessionStore(object):
                 self.send_to_tracer(uuid, event=disable_event)
                 session.tracer.close()
             except socket.error as e:
-                # EPIPE means it is already closed.
-                if e.errno not in [errno.EPIPE, errno.EBADF]:
+                if e.errno not in safe_errnos:
                     log.exception(
                         'Exception caught while killing tracer for session %s:'
                         % uuid
