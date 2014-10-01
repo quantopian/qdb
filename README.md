@@ -1,7 +1,7 @@
 # qdb #
 
 
-Quantopian Remote Debugger for Python
+[Quantopian Remote Debugger](https://www.quantopian.com/posts/new-feature-debugging-in-the-ide) for Python
 
 
 ### Overview ###
