@@ -104,8 +104,7 @@ code in the context of the other process.
 ## Contributions ##
 
 If you would like to contribute, please see our
-[Contribution Requests](https://github.com/quantopian/qdb/wiki/
-Contribution-Requests).
+[Contribution Requests](https://github.com/quantopian/qdb/wiki/Contribution-Requests).
 
 
 ### Requirements ###
