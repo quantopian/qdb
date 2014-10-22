@@ -53,6 +53,10 @@ class TracerTester(TestCase):
         # Stop tracing after each test.
         sys.settrace(None)
 
+    def test_config_and_kwargs_no_merge(self):
+        with self.assertRaises(TypeError):
+            Qdb(config=True, merge=False, keyword=True)
+
     def test_as_ctx_mgr(self):
         """
         Tests the debugger as a context manager.

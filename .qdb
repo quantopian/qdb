@@ -1,0 +1,20 @@
+# Example .qdb file.
+config = QdbConfig(**{
+    'host': 'localhost',
+    'port': 8001,
+    'auth_msg': '',
+    'default_file': None,
+    'default_namespace': None,
+    'eval_fn': None,
+    'exception_serializer': None,
+    'skip_fn': None,
+    'pause_signal': None,
+    'redirect_output': True,
+    'retry_attepts': 10,
+    'uuid': 'qdb',
+    'cmd_manager': None,
+    'green': False,
+    'repr_fn': None,
+    'log_file': None,
+    'execution_timeout': None,
+})

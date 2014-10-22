@@ -33,6 +33,7 @@ except ImportError:
 from logbook import Logger, FileHandler
 
 from qdb.comm import RemoteCommandManager, fmt_msg
+from qdb.config import QdbConfig
 from qdb.errors import QdbUnreachableBreakpoint, QdbQuit, QdbExecutionTimeout
 from qdb.utils import Timeout, default_eval_fn, default_exception_serializer
 
@@ -55,74 +56,46 @@ class Qdb(Bdb, object):
             cls._instance = super(Qdb, cls).__new__(cls, *args, **kwargs)
         return cls._instance
 
-    def __init__(self,
-                 host='localhost',
-                 port=8001,
-                 auth_msg='',
-                 default_file=None,
-                 default_namespace=None,
-                 eval_fn=None,
-                 exception_serializer=None,
-                 skip_fn=None,
-                 pause_signal=None,
-                 redirect_output=True,
-                 retry_attepts=10,
-                 uuid=None,
-                 cmd_manager=None,
-                 green=False,
-                 repr_fn=None,
-                 log_file=None,
-                 execution_timeout=None):
+    def __init__(self, config=None, merge=False, **kwargs):
         """
-        Host and port define the address to connect to.
-        The auth_msg is a message that will be sent with the start event to the
-        server. This can be used to do server/tracer authentication.
-        The default_file is a file to use if the file field is ommited from
-        payloads.
-        eval_fn is the function to eval code where the user may provide it,
-        for example in a conditional breakpoint, or in the repl.
-        skip_fn is simmilar to the skip list feature of Bdb, except that
-        it should be a function that takes a filename and returns True iff
-        the debugger should skip this file. These files will be suppressed from
-        stack traces.
-        The pause_signal is signal to raise in this program to trigger a pause
-        command. If this is none, this will default to SIGUSR2.
-        retry_attempts is the number of times to attempt to connect to the
-        server before raising a QdbFailedToConnect error.
-        The repr_fn is a function to use to convert objects to strings to send
-        then back to the server. By default, this wraps repr by catching
-        exceptions and reporting them to the user.
-        The uuid is the identifier on the server for this session. If none is
-        provided, it will generate a uuid4.
-        cmd_manager should be a callable that takes a Qdb instance and manages
-        commands by implementing a next_command method. If none, a new, default
-        manager will be created that reads commands from the server at
-        (host, port).
-        If green is True, this will use gevent safe timeouts, otherwise this
-        will use signal based timeouts.
-        repr_fn is the repr function to use when displaying results. If None,
-        use the builtin repr.
-        execution_timeout is the amount of time user code has to execute before
-        being cut short. This is applied to the repl, watchlist and conditional
-        breakpoints. If None, no timeout is applied.
+        See qdb.config for more information about the configuration of
+        qdb.
+        merge denotes how config and kwargs should be merged.
+        QdbConfig.kwargs_first says config will trample kwargs,
+        QdbConfig.config_first says kwargs will trample config.
+        Otherwise, kwargs and config cannot both be passed.
         """
         super(Qdb, self).__init__()
-        self.address = host, port
-        self.set_default_file(default_file)
-        self.default_namespace = default_namespace or {}
-        self.exception_serializer = exception_serializer or \
+        if config and kwargs:
+            if merge == QdbConfig.kwargs_first:
+                first = kwargs
+                second = config
+            elif merge == QdbConfig.config_first:
+                first = config
+                second = kwargs
+            else:
+                raise TypeError('Cannot pass config and kwargs')
+            config = first.merge(second)
+        else:
+            config = QdbConfig.get_config(config or kwargs)
+
+        self.address = config.host, config.port
+        self.set_default_file(config.default_file)
+        self.default_namespace = config.default_namespace or {}
+        self.exception_serializer = config.exception_serializer or \
             default_exception_serializer
-        self.eval_fn = eval_fn or default_eval_fn
-        self.green = green
+        self.eval_fn = config.eval_fn or default_eval_fn
+        self.green = config.green
         self._file_cache = {}
-        self.redirect_output = redirect_output
-        self.retry_attepts = retry_attepts
-        self.repr_fn = repr_fn
-        self.skip_fn = skip_fn or (lambda _: False)
-        self.pause_signal = pause_signal if pause_signal else signal.SIGUSR2
-        self.uuid = str(uuid or uuid4())
+        self.redirect_output = config.redirect_output
+        self.retry_attepts = config.retry_attepts
+        self.repr_fn = config.repr_fn
+        self.skip_fn = config.skip_fn or (lambda _: False)
+        self.pause_signal = config.pause_signal \
+            if config.pause_signal else signal.SIGUSR2
+        self.uuid = str(config.uuid or uuid4())
         self.watchlist = {}
-        self.execution_timeout = execution_timeout
+        self.execution_timeout = config.execution_timeout
         # We need to be able to send stdout back to the user debugging the
         # program. We hold a handle to this in case the program resets stdout.
         if self.redirect_output:
@@ -134,13 +107,11 @@ class Qdb(Bdb, object):
             sys.stderr = self.stderr
         self.forget()
         self.log_handler = None
-        if log_file:
-            self.log_handler = FileHandler(log_file)
+        if config.log_file:
+            self.log_handler = FileHandler(config.log_file)
             self.log_handler.push_application()
-        if not cmd_manager:
-            cmd_manager = RemoteCommandManager
-        self.cmd_manager = cmd_manager(self)
-        self.cmd_manager.start(auth_msg)
+        self.cmd_manager = (config.cmd_manager or RemoteCommandManager)(self)
+        self.cmd_manager.start(config.auth_msg)
 
     def clear_output_buffers(self):
         """
