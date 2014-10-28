@@ -429,7 +429,7 @@ class Qdb(Bdb, object):
         self.cmd_manager.send_stack()
         msg = fmt_msg(
             'exception', {
-                'type': str(exc_type),
+                'type': exc_type.__name__,
                 'value': str(exc_value),
                 'traceback': traceback.format_tb(exc_traceback)
             },

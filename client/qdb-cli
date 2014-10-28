@@ -436,6 +436,9 @@ class ServerPrinter(object):
             )
         self.writeln(']')
 
+    def event_exception(self, payload):
+        self.writeln('--* %s:%s' % (payload['type'], payload['value']))
+
     def event_breakpoints(self, payload):
         self.writeln('breakpoints: [')
         for breakpoint in payload:
@@ -461,6 +464,7 @@ class ServerPrinter(object):
 
     def event_disable(self, payload):
         self.writeln('Disabled, goodbye.')
+
 
 if __name__ == '__main__':
     argparser = argparse.ArgumentParser()
