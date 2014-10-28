@@ -23,6 +23,7 @@ from struct import pack
 from time import time
 
 import gevent
+from gevent.lock import RLock
 from gevent import socket
 from gevent.event import Event
 from geventwebsocket import WebSocketError
@@ -150,6 +151,7 @@ class SessionStore(object):
         self.timeout_disable_mode = timeout_disable_mode
         self._sessions = {}
         self.gc_glet = None
+        self._lock = RLock()
 
     def __contains__(self, uuid):
         """
@@ -362,12 +364,15 @@ class SessionStore(object):
             raise
 
         clients = self._sessions[uuid].clients
-        for client in set(clients):
-            try:
-                client.send(msg)
-            except:
-                log.info('Client was closed for debug session: %s' % uuid)
-                clients.remove(client)
+
+        with self._lock:
+            for client in set(clients):
+                try:
+                    client.send(msg)
+                except Exception:
+                    log.info('Client was closed for debug session: %s' % uuid)
+                    clients.remove(client)
+
         self._update_timestamp(uuid)
 
     def slaughter(self, uuid, mode='soft'):
