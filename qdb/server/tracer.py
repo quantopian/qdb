@@ -25,6 +25,7 @@ except ImportError:
     import pickle
 
 from qdb.comm import get_events_from_socket
+from qdb.server.serverbase import QdbServerBase
 
 log = Logger('QdbTracerServer')
 
@@ -37,7 +38,7 @@ class AuthenticationFailed(Exception):
         self.message = message
 
 
-class QdbTracerServer(StreamServer):
+class QdbTracerServer(QdbServerBase, StreamServer):
     """
     Listens for qdb tracer connections on a socket, spinning up new client
     connections.
@@ -46,11 +47,11 @@ class QdbTracerServer(StreamServer):
                  session_store,
                  host='localhost',
                  port=8001,
-                 tracer_auth_fn=None,
+                 auth_fn=None,
                  auth_timeout=60):  # seconds
         self.auth_timeout = auth_timeout
         self.session_store = session_store
-        self.tracer_auth_fn = tracer_auth_fn or (lambda _: True)  # No auth
+        self.auth_fn = auth_fn or self.NO_AUTH
         super(QdbTracerServer, self).__init__(
             (host, port),
             handle=self.handle_tracer,
@@ -85,7 +86,7 @@ class QdbTracerServer(StreamServer):
             if start_event['e'] == 'start':
                 local = start_event['p']['local']
                 uuid = start_event['p']['uuid']
-                if not self.tracer_auth_fn(start_event['p'].get('auth', '')):
+                if not self.auth_fn(start_event['p'].get('auth', '')):
                     # We failed the authentication check.
                     log.warn('Bad authentication message from (%s, %d)' % addr)
                     raise AuthenticationFailed()
@@ -104,6 +105,7 @@ class QdbTracerServer(StreamServer):
         uuid = None
         local_pid, pause_signal = 0, 0
         message = ''
+
         log.info('New tracer request from (%s, %d)' % addr)
         try:
             start_event = None

@@ -65,7 +65,7 @@ class QdbServer(object):
         self._stop = Event()
         self.tracer_server = tracer_server or QdbTracerServer(
             session_store=self.session_store,
-            tracer_auth_fn=tracer_auth_fn,
+            auth_fn=tracer_auth_fn,
             host=tracer_host,
             port=tracer_port,
             auth_timeout=auth_timeout
@@ -76,7 +76,7 @@ class QdbServer(object):
             port=client_port,
             route=route or DEFAULT_ROUTE,
             auth_timeout=auth_timeout,
-            client_auth_fn=client_auth_fn,
+            auth_fn=client_auth_fn,
         )
         host = self.client_server.address[0], self.tracer_server.address[0]
         port = self.client_server.address[1], self.tracer_server.address[1]

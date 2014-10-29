@@ -25,6 +25,7 @@ from logbook import Logger
 
 from qdb.comm import fmt_msg, fmt_err_msg
 from qdb.errors import QdbInvalidRoute
+from qdb.server.serverbase import QdbServerBase
 
 log = Logger('QdbClientServer')
 
@@ -36,13 +37,13 @@ DEFAULT_ROUTE = r'/(.+)'
 DEFAULT_ROUTE_FMT = '/{uuid}'
 
 
-class QdbClientServer(object):
+class QdbClientServer(QdbServerBase):
     def __init__(self,
                  session_store,
                  host='localhost',
                  port=8002,
                  route=DEFAULT_ROUTE,
-                 client_auth_fn=None,
+                 auth_fn=None,
                  auth_timeout=60):  # seconds
         """
         The parameters here are the same  for the client server except for
@@ -55,7 +56,7 @@ class QdbClientServer(object):
         The auth_timeout is the amount of time to leave a socket open awaiting
         the start_event or first message. This is measured in seconds.
         """
-        self.client_auth_fn = client_auth_fn or (lambda _: True)  # No auth
+        self.auth_fn = auth_fn or self.NO_AUTH
         self.auth_timeout = auth_timeout
         self.route = re.compile(route, re.IGNORECASE)
         self.session_store = session_store
@@ -121,6 +122,7 @@ class QdbClientServer(object):
         path = environ['PATH_INFO']
         ws = environ['wsgi.websocket']
         addr = environ['REMOTE_ADDR']
+
         try:
             match = self.route.match(path)
             if not match:
@@ -143,7 +145,7 @@ class QdbClientServer(object):
             elif start_event['e'] != 'start':
                 message = "First event must be of type: 'start'"
                 failed = True
-            elif not self.client_auth_fn(start_event.get('p', '')):
+            elif not self.auth_fn(start_event.get('p', '')):
                 log.warn('Client %s failed to authenticate' % addr)
                 message = 'Authentication failed'
                 failed = True
@@ -184,3 +186,7 @@ class QdbClientServer(object):
         """
         log.info('Stopping qdb.server.client')
         self._server.stop()
+
+    @property
+    def _extra_repr_args(self):
+        return ('route=%s' % repr(self.route.pattern),)
