@@ -12,9 +12,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from abc import ABCMeta, abstractmethod, abstractproperty
 import ast
 import re
 import signal as signal_module
+from six import with_metaclass
 import sys
 import tokenize
 
@@ -305,3 +307,111 @@ def progn(src, eval_fn=None, stackframe=None):
     except KeyError:
         # There was no final expression.
         raise QdbPrognEndsInStatement(src)
+
+
+class Maybe(with_metaclass(ABCMeta)):
+    """
+    A basic failure monad.
+    """
+    @abstractproperty
+    def value(self):
+        """
+        The value that this wraps.
+        """
+        raise NotImplementedError('value')
+
+    @abstractmethod
+    def join(self):
+        """
+        Drops one level of Maybe.
+
+        >>> Just(Just(1)).join()
+        Just(1)
+        """
+        raise NotImplementedError('join')
+
+    @abstractmethod
+    def bind(self, f):
+        raise NotImplementedError('bind')
+
+    @staticmethod
+    def unit(value):
+        """
+        Construct a Maybe value from a concrete value.
+        """
+        return Just(value)
+
+    def __eq__(self, other):
+        if not isinstance(other, Maybe):
+            return False
+
+        return self.value == other.value
+
+
+class NothingType(Maybe):
+    _instance = None
+
+    def __new__(cls):
+        # There can only be one Nothing,
+        if cls._instance is None:
+            cls._instance = super(NothingType, cls).__new__(cls)
+        return cls._instance
+
+    @property
+    def value(self):
+        return self
+
+    def join(self):
+        return self
+
+    def bind(self, f):
+        return self
+
+    def __str__(self):
+        return 'Nothing'
+
+    __repr__ = __str__
+
+
+# The Nothing value is the only NothingType.
+# for all NothingType(). NothingType() is Nothing
+Nothing = NothingType()
+
+
+class Just(Maybe):
+    def __init__(self, value):
+        self._value = value
+
+    @property
+    def value(self):
+        return self._value
+
+    def join(self):
+        nothing = Nothing()
+        if self._value is nothing:
+            return nothing
+        elif isinstance(self._value, Just):
+            return self._value
+        else:
+            raise TypeError('join expects M(M(v)) not M(v)')
+
+    def bind(self, f):
+        return f(self._value)
+
+    def __str__(self):
+        return 'Just (%s)' % self._value
+
+    def __repr__(self):
+        return 'Just(%s)' % repr(self._value)
+
+
+def from_maybe(maybe_v, default):
+    """
+    Extract a value out of a Maybe.
+
+    If maybe_v is Nothing(), then return the default.
+    """
+    if maybe_v is Nothing:
+        return default
+
+    return maybe_v.value
