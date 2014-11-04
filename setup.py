@@ -60,10 +60,13 @@ setup(
         'Topic :: Software Development :: Debuggers',
     ],
     install_requires=[
+        'contextlib2',
         'gevent',
         'gevent-websocket',
         'gipc',
         'Logbook',
+        'six',
+        'websocket-client',
     ],
     url="https://github.com/quantopian/qdb"
 )
