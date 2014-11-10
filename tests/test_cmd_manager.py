@@ -62,10 +62,6 @@ class RemoteCommandManagerTester(TestCase):
         cls.setup_server()
         cls.cmd_manager = RemoteCommandManager
 
-    def tearDown(self):
-        if Qdb._instance:
-            Qdb._instance.disable()
-
     @classmethod
     def setup_server(cls):
         """
@@ -90,6 +86,10 @@ class RemoteCommandManagerTester(TestCase):
         Stop the test server.
         """
         cls.server.stop()
+
+    def tearDown(self):
+        if Qdb._instance:
+            Qdb._instance.disable()
 
     def MockTracer(self):
         """
