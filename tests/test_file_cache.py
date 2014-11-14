@@ -23,6 +23,10 @@ from tests import fix_filename
 
 
 class QdbFileCacheTester(TestCase):
+    def tearDown(self):
+        if Qdb._instance:
+            Qdb._instance.disable()
+
     def test_file_cache_from_string(self):
         """
         Asserts that manual caching from a string works.

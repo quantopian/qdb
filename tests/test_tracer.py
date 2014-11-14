@@ -52,10 +52,14 @@ class TracerTester(TestCase):
     def tearDown(self):
         # Stop tracing after each test.
         sys.settrace(None)
+        if Qdb._instance:
+            Qdb._instance.disable()
 
     def test_config_and_kwargs_no_merge(self):
         with self.assertRaises(TypeError):
             Qdb(config=True, merge=False, keyword=True)
+
+        Qdb._instance = None
 
     def test_as_ctx_mgr(self):
         """
@@ -64,10 +68,9 @@ class TracerTester(TestCase):
         line_1 = False
         cmd_stop = None
         with patch.object(NopCommandManager, 'start') as cmd_start, \
-                patch.object(NopCommandManager, 'stop') as cmd_stop_scoped, \
+                patch.object(NopCommandManager, 'stop') as cmd_stop, \
                 Qdb(cmd_manager=NopCommandManager) as db:
             db.set_trace()
-            cmd_stop = cmd_stop_scoped
             cmd_start.assert_called_once_with('')
             line_1 = True
             self.assertTrue(line_1)
@@ -243,6 +246,7 @@ class TracerTester(TestCase):
         )
 
         sys.settrace(None)
+        db.disable()
         db = Qdb(cmd_manager=QueueCommandManager)
         line_2_offset = 13  # The difference in the set_break call and line_2.
         line_3_offset = 10   # THe difference in the set_break call and line_3.
