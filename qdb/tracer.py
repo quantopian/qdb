@@ -53,10 +53,14 @@ class Qdb(Bdb, object):
         called.
         """
         if not cls._instance:
-            cls._instance = super(Qdb, cls).__new__(cls, *args, **kwargs)
+            cls._instance = super(Qdb, cls).__new__(cls)
+            cls._instance._init(*args, **kwargs)
         return cls._instance
 
-    def __init__(self, config=None, merge=False, **kwargs):
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def _init(self, config=None, merge=False, **kwargs):
         """
         See qdb.config for more information about the configuration of
         qdb.
@@ -66,6 +70,7 @@ class Qdb(Bdb, object):
         Otherwise, kwargs and config cannot both be passed.
         """
         super(Qdb, self).__init__()
+        self.reset()
         if config and kwargs:
             if merge == QdbConfig.kwargs_first:
                 first = kwargs
@@ -105,7 +110,6 @@ class Qdb(Bdb, object):
             self.stderr = StringIO()
             sys.stdout = self.stdout
             sys.stderr = self.stderr
-        self.forget()
         self.log_handler = None
         if config.log_file:
             self.log_handler = FileHandler(config.log_file)
