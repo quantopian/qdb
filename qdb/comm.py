@@ -204,18 +204,6 @@ class CommandManager(object):
             }
         )
 
-    def send_output(self):
-        """
-        Sends a print that denotes that this is coming from the process.
-        This function is a nop if the tracer is not set to redirect the
-        stdout and stderr to the client.
-        """
-        if self.tracer.redirect_output:
-            self.send_print('<stdout>', False, self.tracer.stdout.getvalue())
-            self.send_print('<stderr>', False, self.tracer.stderr.getvalue())
-            # We don't need to cache this anymore.
-            self.tracer.clear_output_buffers()
-
     def send_error(self, error_type, error_data):
         """
         Sends a formatted error message.
@@ -730,7 +718,6 @@ class RemoteCommandManager(CommandManager):
         Sends back initial information and defers to user control.
         """
         self.send_breakpoints()
-        self.send_output()
         self.send_watchlist()
         self.send_stack()
         self.next_command()

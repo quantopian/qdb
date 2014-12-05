@@ -21,11 +21,6 @@ from uuid import uuid4
 from contextlib2 import ExitStack, contextmanager
 
 try:
-    from cStringIO import StringIO
-except ImportError:
-    from StringIO import StringIO
-
-try:
     import cPickle as pickle
 except ImportError:
     import pickle
@@ -35,6 +30,7 @@ from logbook import Logger, FileHandler
 from qdb.comm import RemoteCommandManager, fmt_msg
 from qdb.config import QdbConfig
 from qdb.errors import QdbUnreachableBreakpoint, QdbQuit, QdbExecutionTimeout
+from qdb.output import RemoteOutput, OutputTee
 from qdb.utils import Timeout, default_eval_fn, default_exception_serializer
 
 
@@ -101,32 +97,30 @@ class Qdb(Bdb, object):
         self.uuid = str(config.uuid or uuid4())
         self.watchlist = {}
         self.execution_timeout = config.execution_timeout
+        self.reset()
+        self.log_handler = None
+        if config.log_file:
+            self.log_handler = FileHandler(config.log_file)
+            self.log_handler.push_application()
+
+        # The timing between these lines might matter depending on the
+        # cmd_manager. Don't seperate them.
+        self.cmd_manager = (config.cmd_manager or RemoteCommandManager)(self)
+        self.cmd_manager.start(config.auth_msg)
+
         # We need to be able to send stdout back to the user debugging the
         # program. We hold a handle to this in case the program resets stdout.
         if self.redirect_output:
             self._old_stdout = sys.stdout
             self._old_stderr = sys.stderr
-            self.stdout = StringIO()
-            self.stderr = StringIO()
-            sys.stdout = self.stdout
-            sys.stderr = self.stderr
-        self.log_handler = None
-        if config.log_file:
-            self.log_handler = FileHandler(config.log_file)
-            self.log_handler.push_application()
-        self.cmd_manager = (config.cmd_manager or RemoteCommandManager)(self)
-        self.cmd_manager.start(config.auth_msg)
-
-    def clear_output_buffers(self):
-        """
-        Clears the output buffers.
-        """
-        self.stdout.close()
-        self.stderr.close()
-        self.stdout = StringIO()
-        self.stderr = StringIO()
-        sys.stdout = self.stdout
-        sys.stderr = self.stderr
+            sys.stdout = OutputTee(
+                sys.stdout,
+                RemoteOutput(self.cmd_manager, '<stdout>'),
+            )
+            sys.stderr = OutputTee(
+                sys.stderr,
+                RemoteOutput(self.cmd_manager, '<stderr>'),
+            )
 
     def restore_output_streams(self):
         """
@@ -411,7 +405,6 @@ class Qdb(Bdb, object):
     def user_line(self, stackframe):
         self.setup_stack(stackframe, None)
         self.cmd_manager.send_watchlist()
-        self.cmd_manager.send_output()
         self.cmd_manager.send_stack()
         self.cmd_manager.next_command()
 
@@ -419,7 +412,6 @@ class Qdb(Bdb, object):
         stackframe.f_locals['__return__'] = return_value
         self.setup_stack(stackframe, None)
         self.cmd_manager.send_watchlist()
-        self.cmd_manager.send_output()
         self.cmd_manager.send_stack()
         msg = fmt_msg('return', str(return_value), serial=pickle.dumps)
         self.cmd_manager.next_command(msg)
@@ -429,7 +421,6 @@ class Qdb(Bdb, object):
         stackframe.f_locals['__exception__'] = exc_type, exc_value
         self.setup_stack(stackframe, exc_traceback)
         self.cmd_manager.send_watchlist()
-        self.cmd_manager.send_output()
         self.cmd_manager.send_stack()
         msg = fmt_msg(
             'exception', {

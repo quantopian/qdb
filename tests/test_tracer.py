@@ -28,7 +28,7 @@ from qdb.comm import NopCommandManager
 from qdb.errors import QdbExecutionTimeout
 
 from tests import fix_filename
-from tests.utils import QueueCommandManager
+from tests.utils import QueueCommandManager, OutputCatchingNopCommandManager
 
 
 def global_fn():
@@ -577,7 +577,7 @@ class TracerTester(TestCase):
         Tests that stdout is stored on the tracer.
         """
         sys.stdout = stdout = StringIO()
-        db = Qdb(cmd_manager=NopCommandManager)
+        db = Qdb(cmd_manager=OutputCatchingNopCommandManager)
 
         data_to_write = 'stdout'
         db.set_trace(stop=False)
@@ -585,7 +585,11 @@ class TracerTester(TestCase):
         print data_to_write,  # Write some data to stdout.
 
         db.disable()
-        self.assertEqual(db.stdout.getvalue(), data_to_write)
+        msg = db.cmd_manager.msgs[0]
+        self.assertEqual(msg.input_, '<stdout>')
+        self.assertFalse(msg.exc)
+        self.assertEqual(msg.output, data_to_write)
+        self.assertEqual(stdout.getvalue(), data_to_write)
 
         # Assert that the stream was restored.
         self.assertIs(sys.stdout, stdout)
@@ -595,7 +599,7 @@ class TracerTester(TestCase):
         Tests that stderr is stored on the tracer.
         """
         sys.stderr = stderr = StringIO()
-        db = Qdb(cmd_manager=NopCommandManager)
+        db = Qdb(cmd_manager=OutputCatchingNopCommandManager)
 
         data_to_write = 'stderr'
         db.set_trace(stop=False)
@@ -603,34 +607,15 @@ class TracerTester(TestCase):
         print >> sys.stderr, data_to_write,  # Write some data to stderr.
 
         db.disable()
-        self.assertEqual(db.stderr.getvalue(), data_to_write)
+
+        msg = db.cmd_manager.msgs[0]
+        self.assertEqual(msg.input_, '<stderr>')
+        self.assertFalse(msg.exc)
+        self.assertEqual(msg.output, data_to_write)
+        self.assertEqual(stderr.getvalue(), data_to_write)
 
         # Assert that the stream was restored.
         self.assertIs(sys.stderr, stderr)
-
-    def test_clear_output_buffers(self):
-        """
-        Tests that we can clear the output buffers to free up some memory.
-        """
-
-        db = Qdb(cmd_manager=NopCommandManager)
-        stdout_data, stderr_data = 'stdout', 'stderr'
-        db.set_trace(stop=False)
-
-        print stdout_data,
-        print >> sys.stderr, stderr_data,
-
-        db.disable()
-
-        # Assert that the data actually got written.
-        self.assertEqual(db.stdout.getvalue(), stdout_data)
-        self.assertEqual(db.stderr.getvalue(), stderr_data)
-
-        db.clear_output_buffers()
-
-        # Assert that the data actually got cleared.
-        self.assertEqual(db.stdout.getvalue(), '')
-        self.assertEqual(db.stderr.getvalue(), '')
 
     def test_inject_default_ns(self):
         """

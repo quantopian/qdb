@@ -12,10 +12,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from collections import namedtuple
 import gevent
 from gevent.queue import Queue, Empty
 
-from qdb.comm import CommandManager
+from qdb.comm import CommandManager, NopCommandManager
 
 try:
     import cPickle as pickle
@@ -69,3 +70,15 @@ class QueueCommandManager(CommandManager):
 
     def start(self, auth_msg=''):
         pass
+
+
+OutputMessage = namedtuple('OutputMessage', ['input_', 'exc', 'output'])
+
+
+class OutputCatchingNopCommandManager(NopCommandManager):
+    def __init__(self, tracer):
+        super(OutputCatchingNopCommandManager, self).__init__(tracer)
+        self.msgs = []
+
+    def send_print(self, input_, exc, output):
+        self.msgs.append(OutputMessage(input_, exc, output))
