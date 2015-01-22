@@ -122,7 +122,7 @@ class QdbTimeout(QdbError):
         return 'Timed out after %s seconds' % self.seconds
 
     def __repr__(self):
-        return 'QdbTimeout(seconds=%s, exception=%s, timer_signal=%)' \
+        return 'QdbTimeout(seconds=%s, exception=%s, timer_signal=%s)' \
             % (self.seconds, self.exception, signal_module.SIGALRM)
 
 
