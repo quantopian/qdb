@@ -34,7 +34,7 @@ if __name__ == '__main__':
         metavar='TRACER-PORT',
         help='The port the tracer traffic will be served on.',
         default=8001,
-        )
+    )
     argparser.add_argument(
         '--client-host',
         type=str,
