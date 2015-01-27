@@ -297,7 +297,7 @@ def progn(src, eval_fn=None, stackframe=None):
         eval_fn(code, stackframe, 'exec', original=src)
     finally:
         # Always remove the register function from the namespace.
-        # This is to not fill the namespace after mutliple calls to progn.
+        # This is to not fill the namespace after multiple calls to progn.
         del stackframe.f_globals[register_name]
     try:
         # Attempt to retrieve the last expression.

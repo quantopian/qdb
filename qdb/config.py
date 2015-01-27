@@ -69,7 +69,7 @@ class QdbConfig(namedtuple('QdbConfig', DEFAULT_OPTIONS)):
           port (int): The `port` to connect on.
           auth_msg (str): A message that will be sent with the start event
             to the server. This can be used to do server/tracer authentication.
-          default_file (str): a file to use if the file field is ommited from
+          default_file (str): a file to use if the file field is omitted from
             payloads.
           eval_fn (function): The function to eval code where the user may
             provide evaluate anything. For example in a conditional breakpoint

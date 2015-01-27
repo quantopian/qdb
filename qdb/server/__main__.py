@@ -85,7 +85,7 @@ if __name__ == '__main__':
         '--sweep-time',
         type=int,
         metavar='SWEEP-TIME-MINS',
-        help='The amount of minutes in between sweeps of innactivity checks.',
+        help='The number of minutes in between sweeps of inactivity checks.',
         default=60,
     )
     argparser.add_argument(
