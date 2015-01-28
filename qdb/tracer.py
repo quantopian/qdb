@@ -466,14 +466,15 @@ class Qdb(Bdb, object):
             if self.log_handler:
                 self.log_handler.pop_application()
             self.cmd_manager.stop()
+            if sys.gettrace() is self.trace_dispatch:
+                sys.settrace(None)
 
     def __enter__(self):
         self.set_trace(sys._getframe().f_back, stop=False)
         return self
 
     def __exit__(self, type, value, traceback):
-        if isinstance(value, QdbQuit) or value is None:
-            self.disable('soft')
+        self.disable('soft')
 
     def set_trace(self, stackframe=None, stop=True):
         """
