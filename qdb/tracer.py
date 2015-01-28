@@ -65,7 +65,8 @@ class Qdb(Bdb, object):
         QdbConfig.config_first says kwargs will trample config.
         Otherwise, kwargs and config cannot both be passed.
         """
-        super(Qdb, self).__init__()
+        self.super_ = super(Qdb, self)
+        self.super_.__init__()
         self.reset()
         if config and kwargs:
             if merge == QdbConfig.kwargs_first:
@@ -237,10 +238,10 @@ class Qdb(Bdb, object):
         This means that the same json data that was used to set a break point
         may be fed into this function with the extra values ignored.
         """
-        super(Qdb, self).clear_break(filename, lineno)
+        self.super_.clear_break(filename, lineno)
 
     def canonic(self, filename):
-        canonic_filename = super(Qdb, self).canonic(filename)
+        canonic_filename = self.super_.canonic(filename)
         if canonic_filename.endswith('pyc'):
             return canonic_filename[:-1]
         return canonic_filename
@@ -394,7 +395,7 @@ class Qdb(Bdb, object):
             return self.trace_dispatch
 
         try:
-            return super(Qdb, self).trace_dispatch(stackframe, event, arg)
+            return self.super_.trace_dispatch(stackframe, event, arg)
         except BdbQuit:
             raise QdbQuit()  # Rewrap as a QdbError object.
 
