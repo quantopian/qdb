@@ -1,5 +1,5 @@
 #
-# Copyright 2014 Quantopian, Inc.
+# Copyright 2015 Quantopian, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -413,7 +413,7 @@ class RemoteCommandManager(CommandManager):
 
     def get_events(self):
         """
-        Infinitly yield events from the Reader.
+        Infinitely yield events from the Reader.
         """
         while self.reader.is_alive():
             try:
@@ -778,7 +778,7 @@ def get_events_from_socket(sck, green=False):
 
 class ServerReader(object):
     """
-    Object that reads from the server asyncronously from the process
+    Object that reads from the server asynchronously from the process
     being debugged.
     """
     def __init__(self, debugger_pipe, session_pid, server_comm_fd,
@@ -799,8 +799,8 @@ class ServerReader(object):
 
     def process_messages(self):
         """
-        Infinitly reads events off the server, if it is a pause, then it pauses
-        the process, otherwise, it passes the message along.
+        Infinitely reads events off the server. If it is a pause, then it
+        pauses the process; otherwise, it passes the message along.
         """
         # Send a message to alert the tracer that we are ready to begin reading
         # messages.

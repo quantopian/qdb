@@ -1,5 +1,5 @@
 #
-# Copyright 2014 Quantopian, Inc.
+# Copyright 2015 Quantopian, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -122,7 +122,7 @@ class QdbTimeout(QdbError):
         return 'Timed out after %s seconds' % self.seconds
 
     def __repr__(self):
-        return 'QdbTimeout(seconds=%s, exception=%s, timer_signal=%)' \
+        return 'QdbTimeout(seconds=%s, exception=%s, timer_signal=%s)' \
             % (self.seconds, self.exception, signal_module.SIGALRM)
 
 
@@ -297,7 +297,7 @@ def progn(src, eval_fn=None, stackframe=None):
         eval_fn(code, stackframe, 'exec', original=src)
     finally:
         # Always remove the register function from the namespace.
-        # This is to not fill the namespace after mutliple calls to progn.
+        # This is to not fill the namespace after multiple calls to progn.
         del stackframe.f_globals[register_name]
     try:
         # Attempt to retrieve the last expression.

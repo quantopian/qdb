@@ -1,5 +1,5 @@
 #
-# Copyright 2014 Quantopian, Inc.
+# Copyright 2015 Quantopian, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -34,7 +34,7 @@ if __name__ == '__main__':
         metavar='TRACER-PORT',
         help='The port the tracer traffic will be served on.',
         default=8001,
-        )
+    )
     argparser.add_argument(
         '--client-host',
         type=str,
@@ -85,7 +85,7 @@ if __name__ == '__main__':
         '--sweep-time',
         type=int,
         metavar='SWEEP-TIME-MINS',
-        help='The amount of minutes in between sweeps of innactivity checks.',
+        help='The number of minutes in between sweeps of inactivity checks.',
         default=60,
     )
     argparser.add_argument(
