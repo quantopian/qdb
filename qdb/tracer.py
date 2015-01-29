@@ -81,6 +81,8 @@ class Qdb(Bdb, object):
         else:
             config = QdbConfig.get_config(config or kwargs)
 
+        config = config.final
+
         self.address = config.host, config.port
         self.set_default_file(config.default_file)
         self.default_namespace = config.default_namespace or {}

@@ -13,17 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from collections import namedtuple
-from itertools import chain, repeat
 import os
 
 from logbook import Logger
-from six.moves import zip, reduce
+from six import iteritems
 
-
-def _coerce_dict(dict_like):
-    if isinstance(dict_like, QdbConfig):
-        return dict_like._asdict()
-    return dict_like
+from qdb.utils import Maybe, Nothing, Just, from_maybe
 
 
 log = Logger('qdb_config')
@@ -52,7 +47,11 @@ DEFAULT_OPTIONS = {
 
 class QdbConfig(namedtuple('QdbConfig', DEFAULT_OPTIONS)):
     """
-    Qdb configuration.
+    A qdb configuration state.
+
+    This is immutable because while you can construct one configuration
+    state from another, you should not be able to mess with the state
+    once you are ready to use it.
     """
     filename = '.qdb'
     DEFAULT_OPTIONS = DEFAULT_OPTIONS
@@ -102,23 +101,39 @@ class QdbConfig(namedtuple('QdbConfig', DEFAULT_OPTIONS)):
         """
         extra = [k for k in kwargs if k not in cls.DEFAULT_OPTIONS]
         if extra:
-            raise TypeError('QdbConfig received extra args: %s' % extra)
+            raise ValueError('QdbConfig received extra args: %s' % extra)
 
-        options = dict(cls.DEFAULT_OPTIONS)
+        kwargs = {k: v if isinstance(v, Maybe) else Just(v)
+                  for k, v in iteritems(kwargs)}
+
+        options = {k: Nothing for k in cls.DEFAULT_OPTIONS}
         options.update(kwargs)
         return super(QdbConfig, cls).__new__(cls, **options)
 
     @classmethod
     def read_from_file(cls, filepath):
-        namespace = {}
+        locals_ = {}
+        globals_ = cls._config_namespace()
         try:
             with open(filepath, 'r') as f:
-                exec(f.read(), {cls.__name__: cls}, namespace)
+                exec(f.read(), globals_, locals_)
         except IOError:
             # Ignore missing files
             log.debug('Skipping loading config from: %s' % filepath)
 
-        return namespace.get('config')
+        return locals_.get('config')
+
+    @classmethod
+    def _config_namespace(cls):
+        """
+        Returns a clean copy of the config file default namespace.
+        """
+        return dict({
+            cls.__name__: cls,
+            Maybe.__name__: Maybe,
+            str(Nothing): Nothing,
+            Just.__name__: Just,
+        })
 
     @classmethod
     def get_config(cls,
@@ -134,33 +149,76 @@ class QdbConfig(namedtuple('QdbConfig', DEFAULT_OPTIONS)):
             return config
 
         if isinstance(config, dict):
-            return cls(**config)
+            args = config
+        else:
+            args = {}
 
-        files = files or ()
-        return cls().merge(
-            cls.read_from_file(filename)
-            for use, filename in chain(
-                ((use_profile, cls.get_profile()),
-                 (use_local, cls.get_local())),
-                zip(repeat(True), files),
-            )
-            if use
-        )
+        base = cls()
+
+        if use_profile:
+            base = base.merge(cls.get_profile())
+
+        if use_local:
+            base = base.merge(cls.get_local())
+
+        return reduce(
+            lambda a, b: a.merge(cls.read_from_file(b)),
+            files or (),
+            base,
+        ).merge(args)
 
     @classmethod
     def get_profile(cls):
-        return os.path.join(os.path.expanduser('~'), cls.filename)
+        return cls.read_from_file(
+            os.path.join(os.path.expanduser('~'), cls.filename),
+        )
 
     @classmethod
     def get_local(cls):
-        return os.path.join(os.getcwd(), cls.filename)
+        return cls.read_from_file(
+            os.path.join(os.getcwd(), cls.filename),
+        )
 
-    def merge(self, configs):
-        return self._replace(**reduce(
-            lambda a, b: (b and a.update(_coerce_dict(b))) or a,
-            configs,
-            self._asdict(),
-        ))
+    def merge(self, other):
+        if other is None:
+            return self
+        elif isinstance(other, dict):
+            return self._merge_dict(other)
+        elif isinstance(other, QdbConfig):
+            return self._merge_dict(other._asdict())
+        else:
+            raise ValueError("Cannot merge with type '%s'" % type(other))
+
+    def _merge_dict(self, other):
+        asdict = self._asdict()
+
+        for k, v in iteritems(other):
+            if v is not Nothing:
+                # We update new values UNLESS it is a Nothing.
+                asdict[k] = v
+
+        return QdbConfig(**asdict)
+
+    @property
+    def final(self):
+        return FinalQdbConfig(
+            *[from_maybe(v, self.DEFAULT_OPTIONS[k])
+              for k, v in iteritems(self._asdict())]
+        )
+
+
+default_config = QdbConfig(**QdbConfig.DEFAULT_OPTIONS)
+
+
+class FinalQdbConfig(namedtuple('FinalQdbConfig', DEFAULT_OPTIONS)):
+    """
+    The final state of a configuration.
+
+    This will not hold Maybes, unless it was a Maybe of Maybe.
+    """
+    @property
+    def final(self):
+        return self
 
 
 # This lives as a class level attribute on QdbConfig.

@@ -13,11 +13,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import os
-from tempfile import mkdtemp, NamedTemporaryFile
 from textwrap import dedent
+from six import iteritems, itervalues
+from tempfile import mkdtemp, NamedTemporaryFile
 from unittest import TestCase
 
-from qdb.config import QdbConfig
+from qdb.config import QdbConfig, default_config
+from qdb.utils import Nothing, Maybe
 
 
 class QdbConfigTester(TestCase):
@@ -27,23 +29,23 @@ class QdbConfigTester(TestCase):
             """\
             # FOR TESTING PURPOSES
             config = QdbConfig(**{
-                'host': 'user-set',
-                'port': 'user-set',
-                'auth_msg': 'user-set',
-                'default_file': 'user-set',
-                'default_namespace': 'user-set',
-                'eval_fn': 'user-set',
-                'exception_serializer': 'user-set',
-                'skip_fn': 'user-set',
-                'pause_signal': 'user-set',
-                'redirect_output': 'user-set',
-                'retry_attepts': 'user-set',
-                'uuid': 'user-set',
-                'cmd_manager': 'user-set',
-                'green': 'user-set',
-                'repr_fn': 'user-set',
-                'log_file': 'user-set',
-                'execution_timeout': 'user-set',
+                'host': Just('user-set'),
+                'port': Just('user-set'),
+                'auth_msg': Just('user-set'),
+                'default_file': Just('user-set'),
+                'default_namespace': Just('user-set'),
+                'eval_fn': Just('user-set'),
+                'exception_serializer': Just('user-set'),
+                'skip_fn': Just('user-set'),
+                'pause_signal': Just('user-set'),
+                'redirect_output': Just('user-set'),
+                'retry_attepts': Just('user-set'),
+                'uuid': Just('user-set'),
+                'cmd_manager': Just('user-set'),
+                'green': Just('user-set'),
+                'repr_fn': Just('user-set'),
+                'log_file': Just('user-set'),
+                'execution_timeout': Just('user-set'),
             })
             """
         )
@@ -112,5 +114,80 @@ class QdbConfigTester(TestCase):
             # Assert athat extra_arg is NOT a valid option.
             extra_arg += '_'
 
-        with self.assertRaisesRegexp(TypeError, extra_arg):
+        with self.assertRaisesRegexp(ValueError, extra_arg):
             QdbConfig.get_config({extra_arg: None})
+
+    def test_config_default_trample(self):
+        """
+        Tests that the default values in QdbConfig.DEFAULT_OPTIONS
+        will trample Nothings that make it to final.
+        """
+        config = QdbConfig.get_config(
+            {k: Nothing for k in QdbConfig.DEFAULT_OPTIONS},
+            use_local=False,
+            use_profile=False,
+        ).final
+
+        self.assertEqual(default_config.final, config)
+
+    def test_nothing_trample(self):
+        """
+        Tests that nothings get trampled at the merge step.
+        """
+        self.assertEqual(default_config, QdbConfig().merge(default_config))
+
+    def test_masked_trample(self):
+        """
+        Tests that Just values will overwrite Nothings.
+        """
+        dict_ = QdbConfig()._asdict()
+        for n, (k, v) in enumerate(iteritems(dict_)):
+            if n % 2:
+                dict_[k] = Maybe.unit('user-set')
+
+        config = QdbConfig(**dict_)
+
+        for n, v in enumerate(itervalues(QdbConfig().merge(config)._asdict())):
+            if n % 2:
+                self.assertEqual(v, Maybe.unit('user-set'))
+            else:
+                self.assertIs(v, Nothing)
+
+    def test_defaults_to_nothings(self):
+        """
+        Assumptions are made that an empty config will have
+        all Nothing's in it. This test asserts this behavior.
+        """
+        for v in QdbConfig():
+            self.assertIs(v, Nothing)
+
+    def test_just_trample(self):
+        """
+        Tests that Just values trample other Just values.
+        """
+        config = QdbConfig(
+            **{k: Maybe.unit('user-set') for k in QdbConfig.DEFAULT_OPTIONS}
+        )
+        self.assertEqual(config, default_config.merge(config))
+
+    def test_config_namespace(self):
+        """
+        Tests that the default namespace has all the names we expect it to.
+        """
+        with NamedTemporaryFile() as f:
+            f.write('\n'.join(QdbConfig._config_namespace()) + '\nconfig = {}')
+            f.flush()
+
+            QdbConfig.read_from_file(f.name)
+
+    def test_values_wrapped(self):
+        """
+        Tests that passing concrete kewords to the QdbConfig constructor
+        will construct Maybes that wrap them as Just value.
+        """
+        for k, v in \
+                iteritems(QdbConfig(**QdbConfig.DEFAULT_OPTIONS)._asdict()):
+
+            default_v = QdbConfig.DEFAULT_OPTIONS[k]
+            self.assertNotIsInstance(default_v, Maybe)
+            self.assertEqual(v, Maybe.unit(default_v))
