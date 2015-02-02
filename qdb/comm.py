@@ -189,8 +189,7 @@ class CommandManager(object):
         stack = []
         index = self.tracer.curindex
         for n, (frame, line) in enumerate(self.tracer.stack):
-            if self.tracer \
-                    .skip_fn(self.tracer.canonic(frame.f_code.co_filename)):
+            if self.tracer.skip_fn(frame.f_code.co_filename):
                 if n < self.tracer.curindex:
                     index -= 1  # Drop the index to account for a skip
                 continue  # Don't add frames we need to skip.
