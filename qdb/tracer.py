@@ -92,7 +92,7 @@ class Qdb(Bdb, object):
         self.redirect_output = config.redirect_output
         self.retry_attepts = config.retry_attepts
         self.repr_fn = config.repr_fn
-        self.skip_fn = config.skip_fn or (lambda _: False)
+        self._skip_fn = config.skip_fn or (lambda _: False)
         self.pause_signal = config.pause_signal \
             if config.pause_signal else signal.SIGUSR2
         self.uuid = str(config.uuid or uuid4())
@@ -122,6 +122,9 @@ class Qdb(Bdb, object):
                 sys.stderr,
                 RemoteOutput(self.cmd_manager, '<stderr>'),
             )
+
+    def skip_fn(self, path):
+        return self._skip_fn(self.canonic(path))
 
     def restore_output_streams(self):
         """
@@ -390,7 +393,7 @@ class Qdb(Bdb, object):
             # We were told to quit by the user, bubble this up to their code.
             return
 
-        if self.skip_fn(self.canonic(stackframe.f_code.co_filename)):
+        if self.skip_fn(stackframe.f_code.co_filename):
             # We want to skip this, don't stop but keep tracing.
             return self.trace_dispatch
 
