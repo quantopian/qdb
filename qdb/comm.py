@@ -672,12 +672,18 @@ class RemoteCommandManager(CommandManager):
         # Count the number of frames that we are not allowed to stop in.
         # We add one at the end because there is an implied shift of at least
         # one stackframe.
+        skip_fn = self.tracer.skip_fn
         diff = sum(1 for _ in takewhile(
-            lambda fl: self.tracer.skip_fn(fl[0].f_code.co_filename),
+            lambda fl: skip_fn(fl[0].f_code.co_filename),
             substack,
         )) + 1
 
-        self._stack_jump_to(self.tracer.curindex + direction * diff)
+        idx = self.tracer.curindex + direction * diff
+        if skip_fn(self.tracer.stack[idx][0].f_code.co_filename):
+            # There are no frames to shift to.
+            raise IndexError('Shifted off the stack')
+
+        self._stack_jump_to(idx)
 
     def command_up(self, payload):
         """
