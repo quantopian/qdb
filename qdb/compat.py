@@ -24,8 +24,12 @@ except NameError:
 
 PY3 = not PY2
 
-
 gevent = sys.modules.get('gevent')
+
+try:
+    import gevent
+except ImportError:
+    gevent = None
 
 
 if PY2:
@@ -35,7 +39,6 @@ if PY2:
         from StringIO import StringIO
 
     from contextlib2 import ExitStack
-
     import itertools
 
     filter = itertools.ifilter
@@ -90,6 +93,7 @@ __all__ = [
     'StringIO',
     'gevent',
     'items',
+    'keys',
     'range',
     'reduce',
     'zip',

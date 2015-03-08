@@ -23,7 +23,7 @@ from uuid import uuid4
 from logbook import Logger, FileHandler
 
 from qdb.comm import RemoteCommandManager, fmt_msg
-from qdb.compat import map, items, ExitStack
+from qdb.compat import map, items
 from qdb.config import QdbConfig
 from qdb.errors import QdbUnreachableBreakpoint, QdbQuit, QdbExecutionTimeout
 from qdb.output import RemoteOutput, OutputTee
