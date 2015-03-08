@@ -30,11 +30,16 @@ skip_py3 = skipIf(PY3, 'This test will not work with python3')
 
 class Py2TestMeta(type):
     def __new__(mcls, name, bases, dict_):
+        if PY3:
+            dict_.pop('setUpClass', None)
+            dict_.pop('tearDownClass', None)
+
         return type.__new__(
             mcls,
             name,
             bases,
-            {k: skip_py3(v) for k, v in items(dict_) if k.startswith('test_')},
+            {k: skip_py3(v) if k.startswith('test_') else v
+             for k, v in items(dict_)},
         )
 
 

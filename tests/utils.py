@@ -17,11 +17,12 @@ import json
 from time import sleep
 
 from qdb.comm import CommandManager, NopCommandManager
-from qdb.compat import gevent, PY3
+from qdb.compat import PY3
 
-
-if gevent is None:
+if PY3:
     from queue import Queue, Empty
+else:
+    from Queue import Queue, Empty
 
 
 class QueueCommandManager(CommandManager):
@@ -44,7 +45,7 @@ class QueueCommandManager(CommandManager):
         """
         Simulates waiting on the user to feed us input for duration seconds.
         """
-        self.enqueue(lambda t: sleep(duration + int(PY3)))
+        self.enqueue(lambda t: sleep(duration + 1))
 
     def clear(self):
         """
