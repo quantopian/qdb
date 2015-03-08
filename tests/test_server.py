@@ -19,7 +19,9 @@ from nose_parameterized import parameterized
 from struct import pack
 
 from qdb.comm import fmt_msg, fmt_err_msg, get_events_from_socket
-from qdb.compat import gevent, with_metaclass, PY2
+from qdb.compat import gevent, PY2
+
+from tests.compat import skip_py3
 
 if PY2:
     # These need python 2
@@ -31,8 +33,6 @@ if PY2:
     )
     from qdb.server.session_store import ALLOW_ORPHANS
     from qdb.server.client import DEFAULT_ROUTE_FMT
-
-from tests.compat import Py2TestMeta
 
 
 def send_tracer_event(sck, event, payload):
@@ -68,7 +68,8 @@ def recv_client_event(ws):
     return json.loads(ws.recv())
 
 
-class ServerTester(with_metaclass(Py2TestMeta, TestCase)):
+@skip_py3
+class ServerTester(TestCase):
     def test_start_stop(self):
         """
         Tests starting and stopping the server.

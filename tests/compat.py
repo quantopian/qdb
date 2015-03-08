@@ -12,7 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 from unittest import skipIf
-from qdb.compat import PY3, items
+from qdb.compat import PY3
 
 try:
     from unittest import mock
@@ -28,24 +28,8 @@ class NonLocal(object):
 skip_py3 = skipIf(PY3, 'This test will not work with python3')
 
 
-class Py2TestMeta(type):
-    def __new__(mcls, name, bases, dict_):
-        if PY3:
-            dict_.pop('setUpClass', None)
-            dict_.pop('tearDownClass', None)
-
-        return type.__new__(
-            mcls,
-            name,
-            bases,
-            {k: skip_py3(v) if k.startswith('test_') else v
-             for k, v in items(dict_)},
-        )
-
-
 __all__ = [
     'NonLocal',
-    'Py2TestMeta',
     'mock',
     'skip_py3',
 ]
