@@ -69,7 +69,7 @@ def fmt_msg(event, payload=None, serial=None):
     """
     Packs a message to be sent to the server.
     Serial is a function to call on the frame to serialize it, e.g:
-    json.dumps or json.dumps
+    json.dumps.
     """
     frame = {
         'e': event,
