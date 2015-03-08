@@ -23,7 +23,7 @@ from nose_parameterized import parameterized
 
 from qdb import Qdb
 from qdb.comm import RemoteCommandManager, ServerLocalCommandManager, fmt_msg
-from qdb.compat import PY2, gevent
+from qdb.compat import with_metaclass, PY2, gevent
 from qdb.errors import (
     QdbFailedToConnect,
     QdbAuthenticationError,
@@ -36,6 +36,9 @@ from tests.compat import mock, skip_py3
 
 if PY2:
     from qdb.server import QdbServer
+
+patch = mock.patch
+MagicMock = mock.MagicMock
 
 patch = mock.patch
 MagicMock = mock.MagicMock
@@ -56,7 +59,7 @@ def set_break_params(tracer, filename, lineno, temporary=False, cond=None,
     }
 
 
-class RemoteCommandManagerTester(TestCase):
+class RemoteCommandManagerTester(with_metaclass(Py2TestMeta, TestCase)):
     """
     Tests the various behaviors that the RemoteCommandManager should conform
     to. Some tests rely on how the command manager affects the tracer that it

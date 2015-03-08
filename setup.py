@@ -67,7 +67,6 @@ setup(
         'Topic :: Software Development :: Debuggers',
     ],
     install_requires=[
-        'contextlib2',
         'Logbook',
         'websocket-client',
     ] + py2_requires,
