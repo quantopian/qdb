@@ -14,11 +14,14 @@
 # limitations under the License.
 from collections import namedtuple
 import json
-
-import gevent
-from gevent.queue import Queue, Empty
+from time import sleep
 
 from qdb.comm import CommandManager, NopCommandManager
+from qdb.compat import gevent, PY3
+
+
+if gevent is None:
+    from queue import Queue, Empty
 
 
 class QueueCommandManager(CommandManager):
@@ -41,7 +44,7 @@ class QueueCommandManager(CommandManager):
         """
         Simulates waiting on the user to feed us input for duration seconds.
         """
-        self.enqueue(lambda t: gevent.sleep(duration))
+        self.enqueue(lambda t: sleep(duration + int(PY3)))
 
     def clear(self):
         """

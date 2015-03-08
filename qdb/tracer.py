@@ -13,17 +13,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from bdb import Bdb, Breakpoint, checkfuncname, BdbQuit
+from contextlib import contextmanager
 import json
 import signal
 import sys
 import traceback
 from uuid import uuid4
 
-from contextlib2 import ExitStack, contextmanager
 from logbook import Logger, FileHandler
 
 from qdb.comm import RemoteCommandManager, fmt_msg
-from qdb.compat import map, items
+from qdb.compat import map, items, ExitStack
 from qdb.config import QdbConfig
 from qdb.errors import QdbUnreachableBreakpoint, QdbQuit, QdbExecutionTimeout
 from qdb.output import RemoteOutput, OutputTee

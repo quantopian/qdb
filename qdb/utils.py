@@ -66,6 +66,9 @@ class QdbTimeout(QdbError):
         exception is the exception to raise in the case of a timeout.
         When exception is ommited or None, the QdbTimeout itself is raised.
         """
+        if isinstance(seconds, float):
+            seconds = int(seconds + 1)
+
         if not isinstance(seconds, int):
             raise ValueError('integer argument expected, got %s'
                              % type(seconds).__name__)

@@ -1,3 +1,16 @@
+#
+# Copyright 2015 Quantopian, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
 try:
     reduce = reduce
     PY2 = True
@@ -21,19 +34,24 @@ if PY2:
     except ImportError:
         from StringIO import StringIO
 
+    from contextlib2 import ExitStack
+
     import itertools
 
     filter = itertools.ifilter
     items = dict.iteritems
+    keys = dict.iterkeys
     map = itertools.imap
     range = xrange  # NOQA
     zip = itertools.izip
 
 else:
+    from contextlib import ExitStack
     from io import StringIO
 
     filter = filter
     items = dict.items
+    keys = dict.keys
     map = map
     range = range
     zip = zip
@@ -66,6 +84,7 @@ def with_metaclass(metaclass, *bases):
 
 __all__ = [
     'Connection',
+    'ExitStack',
     'PY2',
     'PY3',
     'StringIO',

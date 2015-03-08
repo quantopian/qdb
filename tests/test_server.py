@@ -15,18 +15,24 @@
 import json
 from unittest import TestCase
 
-from gevent import Timeout, spawn_later, socket, sleep
 from nose_parameterized import parameterized
 from struct import pack
-from websocket import create_connection
 
 from qdb.comm import fmt_msg, fmt_err_msg, get_events_from_socket
-from qdb.server import (
-    QdbServer,
-    QdbNopServer,
-)
-from qdb.server.session_store import ALLOW_ORPHANS
-from qdb.server.client import DEFAULT_ROUTE_FMT
+from qdb.compat import gevent, with_metaclass, PY2
+
+if PY2:
+    # These need python 2
+    from websocket import create_connection
+
+    from qdb.server import (
+        QdbServer,
+        QdbNopServer,
+    )
+    from qdb.server.session_store import ALLOW_ORPHANS
+    from qdb.server.client import DEFAULT_ROUTE_FMT
+
+from tests.compat import Py2TestMeta
 
 
 def send_tracer_event(sck, event, payload):
@@ -62,7 +68,7 @@ def recv_client_event(ws):
     return json.loads(ws.recv())
 
 
-class ServerTester(TestCase):
+class ServerTester(with_metaclass(Py2TestMeta, TestCase)):
     def test_start_stop(self):
         """
         Tests starting and stopping the server.
@@ -86,8 +92,9 @@ class ServerTester(TestCase):
             client_port=0,
             tracer_port=0
         )
-        with Timeout(1, False):
-            spawn_later(0.3, server.stop)  # Stop the server in 0.3 seconds.
+        with gevent.Timeout(1, False):
+            # Stop the server in 0.3 seconds.
+            gevent.spawn_later(0.3, server.stop)
             server.serve_forever()
         self.assertFalse(server.is_running)
 
@@ -108,7 +115,7 @@ class ServerTester(TestCase):
 
             auth_failed_event = disable_event = None
 
-            with Timeout(2, False):
+            with gevent.Timeout(2, False):
                 # The server should time us out in 1 second and send back these
                 # two messages.
                 auth_failed_event = recv_client_event(ws)
@@ -136,7 +143,7 @@ class ServerTester(TestCase):
             auth_failed_msg = ''
             disable_msg = ''
 
-            with Timeout(2, False):
+            with gevent.Timeout(2, False):
                 # The server should time us out in 1 second and send back these
                 # two messages.
                 auth_failed_msg = ws.recv()
@@ -157,7 +164,7 @@ class ServerTester(TestCase):
 
             auth_failed_dict = fmt_err_msg('auth', 'Authentication failed')
 
-            sck = socket.create_connection(
+            sck = gevent.socket.create_connection(
                 ('localhost', server.tracer_server.server_port)
             )
 
@@ -181,7 +188,7 @@ class ServerTester(TestCase):
                        auth_timeout=1) as server:
 
             auth_failed_dict = fmt_err_msg('auth', 'No start event received')
-            sck = socket.create_connection(
+            sck = gevent.socket.create_connection(
                 ('localhost', server.tracer_server.server_port)
             )
 
@@ -201,7 +208,7 @@ class ServerTester(TestCase):
                        sweep_time=0.01,  # seconds
                        timeout_disable_mode=mode) as server:
 
-            tracer = socket.create_connection(
+            tracer = gevent.socket.create_connection(
                 ('localhost', server.tracer_server.server_port)
             )
             send_tracer_event(tracer, 'start', {
@@ -238,7 +245,7 @@ class ServerTester(TestCase):
             )
             send_client_event(client, 'start', '')
             disable_event = None
-            with Timeout(0.1, False):
+            with gevent.Timeout(0.1, False):
                 error_event = recv_client_event(client)
                 disable_event = recv_client_event(client)
 
@@ -259,7 +266,7 @@ class ServerTester(TestCase):
                        attach_timeout=0.01,
                        timeout_disable_mode=mode) as server:
 
-            tracer = socket.create_connection(
+            tracer = gevent.socket.create_connection(
                 ('localhost', server.tracer_server.server_port)
             )
             send_tracer_event(tracer, 'start', {
@@ -268,7 +275,7 @@ class ServerTester(TestCase):
                 'local': (0, 0),
             })
             disable_event = None
-            with Timeout(0.1, False):
+            with gevent.Timeout(0.1, False):
                 error_event = recv_tracer_event(tracer)
                 disable_event = recv_tracer_event(tracer)
 
@@ -292,7 +299,8 @@ class ServerTester(TestCase):
                                          DEFAULT_ROUTE_FMT.format(uuid='test'))
             )
             send_client_event(client, 'start', '')
-            sleep(0.01)  # yield to the session_store to let it get attached.
+            # yield to the session_store to let it get attached.
+            gevent.sleep(0.01)
             self.assertIn('test', server.session_store)
 
     def test_tracer_orphan_session(self):
@@ -304,7 +312,7 @@ class ServerTester(TestCase):
                        tracer_host='localhost',
                        tracer_port=0,
                        attach_timeout=ALLOW_ORPHANS) as server:
-            tracer = socket.create_connection(
+            tracer = gevent.socket.create_connection(
                 ('localhost', server.tracer_server.server_port)
             )
             send_tracer_event(tracer, 'start', {
@@ -312,5 +320,6 @@ class ServerTester(TestCase):
                 'auth': '',
                 'local': (0, 0),
             })
-            sleep(0.01)  # yield to the session_store to let it get attached.
+            # yield to the session_store to let it get attached.
+            gevent.sleep(0.01)
             self.assertIn('test', server.session_store)

@@ -40,6 +40,12 @@ else:
     # just use the regular README.
     LONG_DESCRIPTION = README_MARKDOWN
 
+
+py2_requires = [
+    'contextlib2',
+]
+
+
 setup(
     name='qdb',
     version='0.1.0',
@@ -61,9 +67,8 @@ setup(
         'Topic :: Software Development :: Debuggers',
     ],
     install_requires=[
-        'contextlib2',
         'Logbook',
         'websocket-client',
-    ],
+    ] + py2_requires,
     url="https://github.com/quantopian/qdb"
 )

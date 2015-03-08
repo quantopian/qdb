@@ -12,23 +12,22 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import print_function
+
 import sys
 from unittest import TestCase
 
-from gevent import Timeout
-from mock import patch
-
-try:
-    from cStringIO import StringIO
-except ImportError:
-    from StringIO import StringIO
-
 from qdb import Qdb
 from qdb.comm import NopCommandManager
+from qdb.compat import StringIO
 from qdb.errors import QdbExecutionTimeout
+from qdb.utils import Timeout
 
 from tests import fix_filename
 from tests.utils import QueueCommandManager, OutputCatchingNopCommandManager
+from tests.compat import mock, NonLocal, skip_py3
+
+patch = mock.patch
 
 
 def global_fn():
@@ -145,17 +144,17 @@ class TracerTester(TestCase):
         db.cmd_manager.user_wait(0.2)
 
         # A mutable structure to check if f is called.
-        f_called = [False]
+        f_called = NonLocal(False)
 
         def f():
-            f_called[0] = True
+            f_called.value = True
 
         with Timeout(0.1, False):
             db.set_trace()
             f()
 
         # We hit that line in f, so it should now be True.
-        self.assertTrue(f_called[0])
+        self.assertTrue(f_called.value)
 
         # Assert that we are currently executing the line we think we should
         # be executing. Since we are just stepping, this should be setting
@@ -168,23 +167,23 @@ class TracerTester(TestCase):
         db.disable()
         db = Qdb(cmd_manager=QueueCommandManager)
 
-        f_called[0] = False
+        f_called = NonLocal(False)
 
         # This time we will be only stepping, so we should not execute the
         # entire call to f.
         db.cmd_manager.enqueue(lambda t: t.set_step())
-        db.cmd_manager.user_wait(0.2)
+        db.cmd_manager.user_wait(1.2)
 
         with Timeout(0.1, False):
             db.set_trace()
             f()
 
         # We should not have hit this line in f.
-        self.assertFalse(f_called[0])
+        self.assertFalse(f_called.value)
         # Since we only stepped once, this is the last time we set the frame.
         self.assertEqual(
             db.get_line(self.filename, db.curframe.f_lineno),
-            '            f_called[0] = True'
+            '            f_called.value = True'
         )
 
     def test_set_continue_no_breaks(self):
@@ -327,6 +326,7 @@ class TracerTester(TestCase):
 
         self.assertTrue(line_1)
 
+    @skip_py3
     def test_watchlist(self):
         """
         Tests the watchlist by evaluating a constant, local function, local
@@ -566,7 +566,7 @@ class TracerTester(TestCase):
         continued = False
         with Timeout(0.1):
             db.set_trace(stop=False)
-            for n in xrange(2):
+            for n in range(2):
                 pass
             continued = True
 
@@ -582,7 +582,8 @@ class TracerTester(TestCase):
         data_to_write = 'stdout'
         db.set_trace(stop=False)
 
-        print data_to_write,  # Write some data to stdout.
+        # Write some data to stdout.
+        print(data_to_write, end='')
 
         db.disable()
         msg = db.cmd_manager.msgs[0]
@@ -604,7 +605,8 @@ class TracerTester(TestCase):
         data_to_write = 'stderr'
         db.set_trace(stop=False)
 
-        print >> sys.stderr, data_to_write,  # Write some data to stderr.
+        # Write some data to stderr.
+        print(data_to_write, end='', file=sys.stderr)
 
         db.disable()
 

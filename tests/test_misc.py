@@ -18,10 +18,9 @@ import sys
 import time
 from unittest import TestCase
 
-import gevent
-from mock import MagicMock
 from nose_parameterized import parameterized
 
+from qdb.compat import gevent, keys
 from qdb.errors import QdbPrognEndsInStatement
 from qdb.utils import (
     default_eval_fn,
@@ -30,6 +29,8 @@ from qdb.utils import (
     QdbTimeout,
     progn,
 )
+
+from tests.compat import mock, skip_py3
 
 
 class FakeFrame(object):
@@ -183,6 +184,7 @@ class TimeoutTester(TestCase):
 
         self.assertIs(signal.getsignal(tsignal), existing_handler)
 
+    @skip_py3
     def test_timeout_smart_constructor(self):
         """
         Tests that the smart constructor returns the correct type.
@@ -276,15 +278,15 @@ class PrognTester(TestCase):
 
         # Make sure the register function name didn't persist.
         self.assertEqual(
-            ['__builtins__', 'global_'],
-            stackframe.f_globals.keys()
+            sorted(('__builtins__', 'global_')),
+            sorted(keys(stackframe.f_globals)),
         )
 
     def test_progn_uses_custom_eval_fn(self):
         """
         Assert that the progn function uses custom eval functions properly.
         """
-        eval_fn = MagicMock()
+        eval_fn = mock.MagicMock()
 
         try:
             progn('2 + 2', eval_fn=eval_fn)
