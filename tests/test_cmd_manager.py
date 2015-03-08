@@ -39,6 +39,7 @@ from tests.compat import Py2TestMeta, mock
 patch = mock.patch
 MagicMock = mock.MagicMock
 
+
 def set_break_params(tracer, filename, lineno, temporary=False, cond=None,
                      funcname=None, **kwargs):
     """
