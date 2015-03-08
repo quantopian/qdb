@@ -799,7 +799,6 @@ def get_events_from_socket(sck, green=False):
 
             if PY3:
                 resp = resp.decode('utf-8')
-            print(resp)
 
             cmd = json.loads(resp)
             if cmd['e'] == 'disabled':
