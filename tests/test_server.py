@@ -28,17 +28,12 @@ from qdb.server import (
 from qdb.server.session_store import ALLOW_ORPHANS
 from qdb.server.client import DEFAULT_ROUTE_FMT
 
-try:
-    import cPickle as pickle
-except ImportError:
-    import pickle
-
 
 def send_tracer_event(sck, event, payload):
     """
     Sends an event over the socket.
     """
-    msg = fmt_msg(event, payload, serial=pickle.dumps)
+    msg = fmt_msg(event, payload, serial=json.dumps)
     sck.sendall(pack('>i', len(msg)))
     sck.sendall(msg)
 

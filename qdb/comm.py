@@ -12,11 +12,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import print_function
+
 from abc import ABCMeta, abstractmethod
 import atexit
 from bdb import Breakpoint
 import errno
 from itertools import takewhile
+import json
 import os
 from pprint import pformat
 import signal
@@ -25,9 +28,9 @@ from struct import pack, unpack
 import sys
 
 from contextlib2 import contextmanager
-import gipc
 from logbook import Logger
 
+from qdb.compat import StringIO, range, PY3, items, Connection
 from qdb.errors import (
     QdbFailedToConnect,
     QdbBreakpointReadError,
@@ -37,16 +40,6 @@ from qdb.errors import (
     QdbPrognEndsInStatement,
 )
 from qdb.utils import Timeout, progn
-
-try:
-    from cStringIO import StringIO
-except ImportError:
-    from StringIO import StringIO
-
-try:
-    import cPickle as pickle
-except ImportError:
-    import pickle
 
 log = Logger('Qdb')
 
@@ -76,7 +69,7 @@ def fmt_msg(event, payload=None, serial=None):
     """
     Packs a message to be sent to the server.
     Serial is a function to call on the frame to serialize it, e.g:
-    json.dumps or pickle.dumps
+    json.dumps or json.dumps
     """
     frame = {
         'e': event,
@@ -120,6 +113,25 @@ class CommandManager(object):
     def __init__(self, tracer):
         self.tracer = tracer
         self.green = self.tracer.green
+        if self.green:
+            import gipc  # Only use gipc if we are running in gevent.
+            self._pipe = gipc.pipe
+            self._start_process = gipc.start_process
+        else:
+            import multiprocessing
+
+            def _pipe(*args, **kwargs):
+                a, b = multiprocessing.Pipe(*args, **kwargs)
+                return Connection(a), Connection(b)
+
+            self._pipe = _pipe
+
+            def _start_process(*args, **kwargs):
+                proc = multiprocessing.Process(*args, **kwargs)
+                proc.start()
+                return proc
+
+            self._start_process = _start_process
 
     def _fmt_stackframe(self, stackframe, line):
         """
@@ -163,7 +175,7 @@ class CommandManager(object):
         self.send_event(
             'watchlist',
             [{'expr': k, 'exc': exc, 'value': val}
-             for k, (exc, val) in self.tracer.watchlist.iteritems()],
+             for k, (exc, val) in items(self.tracer.watchlist)],
         )
 
     def send_print(self, input, exc, output):
@@ -176,7 +188,7 @@ class CommandManager(object):
                 'exc': exc,
                 'output': output
             },
-            serial=pickle.dumps)
+            serial=json.dumps)
         )
 
     def send_stack(self):
@@ -209,13 +221,13 @@ class CommandManager(object):
         """
         Sends a formatted error message.
         """
-        self.send(fmt_err_msg(error_type, error_data, serial=pickle.dumps))
+        self.send(fmt_err_msg(error_type, error_data, serial=json.dumps))
 
     def send_event(self, event, payload=None):
         """
         Sends a formatted event.
         """
-        self.send(fmt_msg(event, payload, serial=pickle.dumps))
+        self.send(fmt_msg(event, payload, serial=json.dumps))
 
     def next_command(self, msg=None):
         """
@@ -230,7 +242,7 @@ class CommandManager(object):
     @abstractmethod
     def send(self, msg):
         """
-        Sends a raw (already pickled) message.
+        Sends a raw (already jsond) message.
         """
         raise NotImplementedError
 
@@ -305,7 +317,7 @@ class RemoteCommandManager(CommandManager):
         """
         Connects to the socket or raise a QdbFailedToConnect error.
         """
-        for n in xrange(self.tracer.retry_attepts):
+        for n in range(self.tracer.retry_attepts):
             # Try to connect to the server.
             try:
                 self.socket = socket.create_connection(self.tracer.address)
@@ -334,9 +346,9 @@ class RemoteCommandManager(CommandManager):
         """
         Begins processing commands from the server.
         """
-        self.pipe, child_end = gipc.pipe()
+        self.pipe, child_end = self._pipe()
         self._socket_connect()
-        self.reader = gipc.start_process(
+        self.reader = self._start_process(
             target=ServerReader,
             args=(child_end, os.getpid(),
                   self.socket.fileno(),
@@ -346,7 +358,14 @@ class RemoteCommandManager(CommandManager):
                                            self.tracer.retry_attepts),
                      green=self.green):
             # Receive a message to know that the reader is ready to begin.
-            self.pipe.get()
+            while True:
+                try:
+                    self.pipe.get()
+                    break
+                except IOError as e:
+                    # EAGAIN says to try the syscall again.
+                    if e.errno != errno.EAGAIN:
+                        raise
 
         self.send(
             fmt_msg(
@@ -355,7 +374,7 @@ class RemoteCommandManager(CommandManager):
                     'auth': auth_msg,
                     'local': (0, 0),
                 },
-                serial=pickle.dumps,
+                serial=json.dumps,
             )
         )
         atexit.register(self.stop)
@@ -393,7 +412,7 @@ class RemoteCommandManager(CommandManager):
         Sends a message to the server.
         """
         self.socket.sendall(pack('>i', len(msg)))
-        self.socket.sendall(msg)
+        self.socket.sendall(msg.encode('utf-8'))
 
     def payload_check(self, payload, command):
         """
@@ -564,7 +583,7 @@ class RemoteCommandManager(CommandManager):
         try:
             breakpoint = self.fmt_breakpoint_dict(payload)
         except QdbBreakpointReadError as b:
-            err_msg = fmt_err_msg('set_break', str(b), serial=pickle.dumps)
+            err_msg = fmt_err_msg('set_break', str(b), serial=json.dumps)
             return self.next_command(err_msg)
 
         try:
@@ -573,7 +592,7 @@ class RemoteCommandManager(CommandManager):
             err_msg = fmt_err_msg(
                 'set_breakpoint',
                 str(u),
-                serial=pickle.dumps
+                serial=json.dumps
             )
             return self.next_command(err_msg)
 
@@ -588,7 +607,7 @@ class RemoteCommandManager(CommandManager):
         try:
             breakpoint = self.fmt_breakpoint_dict(payload)
         except QdbBreakpointReadError as b:
-            err_msg = fmt_err_msg('clear_break', str(b), serial=pickle.dumps)
+            err_msg = fmt_err_msg('clear_break', str(b), serial=json.dumps)
             return self.next_command(err_msg)
 
         self.tracer.clear_break(**breakpoint)
@@ -609,7 +628,7 @@ class RemoteCommandManager(CommandManager):
                 msg = fmt_msg(
                     'list',
                     self.tracer.get_file(payload['file']),
-                    serial=pickle.dumps
+                    serial=json.dumps
                 )
             else:
                 # Send back the slice of the file that they requested.
@@ -620,13 +639,13 @@ class RemoteCommandManager(CommandManager):
                             int(payload.get('start')):int(payload.get('end'))
                         ]
                     ),
-                    serial=pickle.dumps
+                    serial=json.dumps
                 )
         except KeyError:  # The file failed to be cached.
             msg = fmt_err_msg(
                 'list',
                 'File %s does not exist' % payload['file'],
-                serial=pickle.dumps
+                serial=json.dumps
             )
         except TypeError:
             # This occurs when we fail to convert the 'start' or 'stop' fields
@@ -634,7 +653,7 @@ class RemoteCommandManager(CommandManager):
             msg = fmt_err_msg(
                 'list',
                 'List slice arguments must be convertable to type int',
-                serial=pickle.dumps
+                serial=json.dumps
             )
 
         self.next_command(msg)
@@ -752,7 +771,7 @@ class RemoteCommandManager(CommandManager):
             err_msg = fmt_err_msg(
                 'disable',
                 "payload must be either 'soft' or 'hard'",
-                serial=pickle.dumps
+                serial=json.dumps
             )
             return self.next_command(err_msg)
         self.tracer.disable(payload)
@@ -769,7 +788,7 @@ def get_events_from_socket(sck, green=False):
                 return
             rlen = unpack('>i', rlen)[0]
             bytes_received = 0
-            resp = ''
+            resp = b''
             with Timeout(1, False, green=green):
                 while bytes_received < rlen:
                     resp += sck.recv(rlen - bytes_received)
@@ -778,11 +797,15 @@ def get_events_from_socket(sck, green=False):
             if bytes_received != rlen:
                 return  # We are not getting bytes anymore.
 
-            cmd = pickle.loads(resp)
+            if PY3:
+                resp = resp.decode('utf-8')
+            print(resp)
+
+            cmd = json.loads(resp)
             if cmd['e'] == 'disabled':
                 # We are done tracing.
                 return
-        except (socket.error, pickle.UnpicklingError) as e:
+        except (socket.error, ValueError) as e:
             # We can no longer talk the the server.
             log.warn('Exception raised reading from socket')
             yield fmt_err_msg('socket', str(e))
@@ -859,7 +882,7 @@ class ServerLocalCommandManager(RemoteCommandManager):
                     'auth': auth_msg,
                     'local': (os.getpid(), self.tracer.pause_signal),
                 },
-                serial=pickle.dumps,
+                serial=json.dumps,
             )
         )
 

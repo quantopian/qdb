@@ -245,6 +245,7 @@ class RemoteCommandManagerTester(TestCase):
             host=self.tracer_host,
             port=self.tracer_port,
             redirect_output=False,
+            green=True,
         )
         sleep(0.01)
         if direction == 'down':
@@ -293,6 +294,7 @@ class RemoteCommandManagerTester(TestCase):
             cmd_manager=self.cmd_manager,
             host=self.tracer_host,
             port=self.tracer_port,
+            green=True,
         )
         signal.signal(db.pause_signal, pause_handler)
         self.server.session_store.send_to_tracer(
@@ -333,6 +335,7 @@ class RemoteCommandManagerTester(TestCase):
             host=self.tracer_host,
             port=self.tracer_port,
             redirect_output=False,
+            green=True,
         )
         sleep(0.01)
         self.server.session_store.send_to_tracer(
@@ -419,6 +422,7 @@ class RemoteCommandManagerTester(TestCase):
             host=self.tracer_host,
             port=self.tracer_port,
             redirect_output=False,
+            green=True,
         )
         sleep(0.01)
         self.server.session_store.send_to_tracer(
@@ -464,6 +468,7 @@ class RemoteCommandManagerTester(TestCase):
             port=self.tracer_port,
             redirect_output=False,
             execution_timeout=1,
+            green=True,
         )
         sleep(0.01)
         self.server.session_store.send_to_tracer(
@@ -503,6 +508,7 @@ class RemoteCommandManagerTester(TestCase):
             host=self.tracer_host,
             port=self.tracer_port,
             redirect_output=False,
+            green=True,
         )
         sleep(0.01)
         db.set_trace(stop=False)
@@ -542,6 +548,7 @@ class RemoteCommandManagerTester(TestCase):
             port=self.tracer_port,
             redirect_output=False,
             skip_fn=skip_fn if use_skip_fn else None,
+            green=True,
         )
         sleep(0.01)
         self.server.session_store.send_to_tracer(

@@ -13,15 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from collections import namedtuple
+import json
+
 import gevent
 from gevent.queue import Queue, Empty
 
 from qdb.comm import CommandManager, NopCommandManager
-
-try:
-    import cPickle as pickle
-except ImportError:
-    import pickle
 
 
 class QueueCommandManager(CommandManager):
@@ -64,7 +61,7 @@ class QueueCommandManager(CommandManager):
 
     def send(self, msg):
         # Collect the output so that we can make assertions about it.
-        self.sent.append(pickle.loads(msg))
+        self.sent.append(json.loads(msg))
 
     user_stop = clear
 

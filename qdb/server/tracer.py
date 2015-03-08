@@ -12,17 +12,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import json
 import socket
 from struct import pack
 
 from gevent import Timeout
 from gevent.server import StreamServer
 from logbook import Logger
-
-try:
-    import cPickle as pickle
-except ImportError:
-    import pickle
 
 from qdb.comm import get_events_from_socket
 from qdb.server.serverbase import QdbServerBase
@@ -135,7 +131,7 @@ class QdbTracerServer(QdbServerBase, StreamServer):
                 }
 
                 auth_failed_dict['p']['data'] = message
-                err_msg = pickle.dumps(auth_failed_dict)
+                err_msg = json.dumps(auth_failed_dict)
                 conn.sendall(pack('>i', len(err_msg)))
                 conn.sendall(err_msg)
                 log.warn('Invalid start message from (%s, %d)' % addr)

@@ -29,11 +29,6 @@ from gevent.event import Event
 from geventwebsocket import WebSocketError
 from logbook import Logger
 
-try:
-    import cPickle as pickle
-except ImportError:
-    import pickle
-
 from qdb.comm import fmt_msg, fmt_err_msg
 
 
@@ -243,7 +238,7 @@ class SessionStore(object):
             # Signal to the tracer that no client attached.
             self._send_to_socket(socket, fmt_err_msg(
                 'client', 'No client',
-                serial=pickle.dumps
+                serial=json.dumps
             ))
             self.slaughter(uuid, self.timeout_disable_mode)
             log.warn('No client came to debug %s' % uuid)
@@ -334,8 +329,8 @@ class SessionStore(object):
                          % (self._sessions[uuid].pause_signal, uuid))
                 self._update_timestamp(uuid)
                 return  # We 'sent' this event.
-            msg = fmt_msg(event['e'], event.get('p'), serial=pickle.dumps)
-        except (pickle.PicklingError, KeyError) as e:
+            msg = fmt_msg(event['e'], event.get('p'), serial=json.dumps)
+        except (ValueError, KeyError) as e:
             log.warn('send_to_tracer(uuid=%s, event=%s) failed: %s'
                      % (uuid, event, e))
             raise  # The event is just wrong, reraise this to the user.

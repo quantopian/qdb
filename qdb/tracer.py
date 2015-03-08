@@ -13,21 +13,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from bdb import Bdb, Breakpoint, checkfuncname, BdbQuit
+import json
 import signal
 import sys
 import traceback
 from uuid import uuid4
 
 from contextlib2 import ExitStack, contextmanager
-
-try:
-    import cPickle as pickle
-except ImportError:
-    import pickle
-
 from logbook import Logger, FileHandler
 
 from qdb.comm import RemoteCommandManager, fmt_msg
+from qdb.compat import map, items
 from qdb.config import QdbConfig
 from qdb.errors import QdbUnreachableBreakpoint, QdbQuit, QdbExecutionTimeout
 from qdb.output import RemoteOutput, OutputTee
@@ -111,9 +107,9 @@ class Qdb(Bdb, object):
 
         # We need to be able to send stdout back to the user debugging the
         # program. We hold a handle to this in case the program resets stdout.
+        self._old_stdout = sys.stdout
+        self._old_stderr = sys.stderr
         if self.redirect_output:
-            self._old_stdout = sys.stdout
-            self._old_stderr = sys.stderr
             sys.stdout = OutputTee(
                 sys.stdout,
                 RemoteOutput(self.cmd_manager, '<stdout>'),
@@ -200,10 +196,10 @@ class Qdb(Bdb, object):
             return True
         try:
             with open(canonic_name, 'r') as f:
-                self._file_cache[canonic_name] = map(
+                self._file_cache[canonic_name] = tuple(map(
                     lambda l: l[:-1] if l.endswith('\n') else l,
                     f.readlines()
-                )
+                ))
                 return True
         except IOError:
             # The caching operation failed.
@@ -417,7 +413,7 @@ class Qdb(Bdb, object):
         self.setup_stack(stackframe, None)
         self.cmd_manager.send_watchlist()
         self.cmd_manager.send_stack()
-        msg = fmt_msg('return', str(return_value), serial=pickle.dumps)
+        msg = fmt_msg('return', str(return_value), serial=json.dumps)
         self.cmd_manager.next_command(msg)
 
     def user_exception(self, stackframe, exc_info):
@@ -432,7 +428,7 @@ class Qdb(Bdb, object):
                 'value': str(exc_value),
                 'traceback': traceback.format_tb(exc_traceback)
             },
-            serial=pickle.dumps,
+            serial=json.dumps,
         )
         self.cmd_manager.next_command(msg)
 
@@ -506,7 +502,7 @@ class Qdb(Bdb, object):
         """
         stackframe = stackframe or self.curframe
         to_remove = set()
-        for k, v in self.default_namespace.iteritems():
+        for k, v in items(self.default_namespace):
             if k not in stackframe.f_globals:
                 # Only add the default things if the name is unbound.
                 stackframe.f_globals[k] = v
