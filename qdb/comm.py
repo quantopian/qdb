@@ -18,6 +18,7 @@ from bdb import Breakpoint
 import errno
 from itertools import takewhile
 import os
+from pprint import pformat
 import signal
 import socket
 from struct import pack, unpack
@@ -469,37 +470,50 @@ class RemoteCommandManager(CommandManager):
     def command_continue(self, payload):
         self.tracer.set_continue()
 
-    def command_eval(self, payload):
+    def command_pprint(self, payload):
+        """
+        Evaluates the expression with the pretty printer.
+        """
+        return self.command_eval(payload, pprint=True)
+
+    def command_eval(self, payload, pprint=False):
         """
         Evaluates and expression in self.tracer.curframe, reevaluates the
         watchlist, and defers to user control.
         """
         if not self.payload_check(payload, 'eval'):
             return self.next_command()
+
+        repr_fn = self.tracer.repr_fn
+
         with capture_output() as (out, err), \
                 self.tracer._new_execution_timeout(payload), \
                 self.tracer.inject_default_namespace() as stackframe:
             try:
-                if self.tracer.repr_fn:
-                    # Do some some custom single mode magic that lets us call
-                    # the repr function on the last expr.
-                    try:
-                        print self.tracer.repr_fn(
-                            progn(
-                                payload,
-                                self.tracer.eval_fn,
-                                stackframe,
-                            )
-                        )
-                    except QdbPrognEndsInStatement:
-                        # Statements have no value to print.
-                        pass
-                else:
+                if not repr_fn and not pprint:
                     self.tracer.eval_fn(
                         payload,
                         stackframe,
                         'single',
                     )
+                else:
+                    try:
+                        # Do some some custom single mode magic that lets us
+                        # call the repr function on the last expr.
+                        value = progn(
+                            payload,
+                            self.tracer.eval_fn,
+                            stackframe,
+                        )
+                    except QdbPrognEndsInStatement:
+                        # Statements have no value to print.
+                        pass
+                    else:
+                        if pprint:
+                            value = pformat(value)
+                        if repr_fn:
+                            value = repr_fn(value)
+                        print(value)
             except Exception as e:
                 self.send_print(
                     payload,

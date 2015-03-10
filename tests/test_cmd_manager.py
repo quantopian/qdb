@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from functools import partial
+from pprint import pformat
 import signal
 import sys
 from unittest import TestCase
@@ -337,6 +338,59 @@ class RemoteCommandManagerTester(TestCase):
         self.server.session_store.send_to_tracer(
             uuid=db.uuid,
             event=fmt_msg('eval', input_)
+        )
+        self.server.session_store.send_to_tracer(
+            uuid=db.uuid,
+            event=fmt_msg('continue')
+        )
+        db.set_trace(stop=True)
+        self.server.session_store.slaughter(db.uuid)
+
+        self.assertTrue(prints)
+        print_ = prints[0]
+
+        self.assertEqual(print_['input'], input_)
+        self.assertEqual(print_['exc'], exc)
+        self.assertEqual(print_['output'], output)
+
+    @parameterized.expand([
+        ('2 + 2', None, '4'),
+        ('print "test"', None, 'test'),
+        ('ValueError("test")', None, "ValueError('test',)"),
+        ('raise ValueError("test")', 'ValueError', 'ValueError: test'),
+        ('[][10]', 'IndexError', 'IndexError: list index out of range'),
+        ('{}["test"]', 'KeyError', "KeyError: 'test'"),
+        ('(1,) * 30', None, pformat((1,) * 30)),
+        ('set(range(30))', None, pformat(set(range(30)))),
+    ])
+    def test_eval_pprint(self, input_, exc, output):
+        """
+        Tests that evaling code returns the proper results.
+        """
+        prints = []
+
+        class cmd_manager(self.cmd_manager):
+            """
+            Captures print commands to make assertions on them.
+            """
+            def send_print(self, input_, exc, output):
+                prints.append({
+                    'input': input_,
+                    'exc': exc,
+                    'output': output
+                })
+
+        db = Qdb(
+            uuid='eval_test',
+            cmd_manager=cmd_manager,
+            host=self.tracer_host,
+            port=self.tracer_port,
+            redirect_output=False,
+        )
+        sleep(0.01)
+        self.server.session_store.send_to_tracer(
+            uuid=db.uuid,
+            event=fmt_msg('pprint', input_)
         )
         self.server.session_store.send_to_tracer(
             uuid=db.uuid,
