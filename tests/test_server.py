@@ -56,7 +56,7 @@ def recv_tracer_event(sck):
     Reads an event off the socket.
     """
     try:
-        return next(get_events_from_socket(sck, green=True))
+        return next(get_events_from_socket(sck))
     except StopIteration:
         return {}
 

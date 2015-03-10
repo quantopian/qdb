@@ -112,8 +112,7 @@ class CommandManager(object):
 
     def __init__(self, tracer):
         self.tracer = tracer
-        self.green = self.tracer.green
-        if self.green:
+        if gevent is not None:
             import gipc  # Only use gipc if we are running in gevent.
             self._pipe = gipc.pipe
             self._start_process = gipc.start_process
@@ -776,7 +775,7 @@ class RemoteCommandManager(CommandManager):
         self.tracer.disable(payload)
 
 
-def get_events_from_socket(sck, green=False):
+def get_events_from_socket(sck):
     """
     Yields valid events from the server socket.
     """
@@ -788,7 +787,7 @@ def get_events_from_socket(sck, green=False):
             rlen = unpack('>i', rlen)[0]
             bytes_received = 0
             resp = b''
-            with Timeout(1, False, green=green):
+            with Timeout(1, False):
                 while bytes_received < rlen:
                     resp += sck.recv(rlen - bytes_received)
                     bytes_received = len(resp)

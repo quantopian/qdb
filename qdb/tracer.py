@@ -83,7 +83,6 @@ class Qdb(Bdb, object):
         self.exception_serializer = config.exception_serializer or \
             default_exception_serializer
         self.eval_fn = config.eval_fn or default_eval_fn
-        self.green = config.green
         self._file_cache = {}
         self.redirect_output = config.redirect_output
         self.retry_attepts = config.retry_attepts
@@ -135,13 +134,13 @@ class Qdb(Bdb, object):
         Return a new execution timeout context manager.
         If not execution timeout is in place, returns ExitStack()
         """
-        # We use green=False because this could be cpu bound. This will
+        # We use no_gevent=True because this could be cpu bound. This will
         # still throw to the proper greenlet if this is gevented.
         return (
             Timeout(
                 self.execution_timeout,
                 QdbExecutionTimeout(src, self.execution_timeout),
-                green=False
+                no_gevent=True,
             ) if self.execution_timeout else ExitStack()
         )
 

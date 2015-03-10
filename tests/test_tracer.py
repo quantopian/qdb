@@ -19,7 +19,7 @@ from unittest import TestCase
 
 from qdb import Qdb
 from qdb.comm import NopCommandManager
-from qdb.compat import StringIO, gevent
+from qdb.compat import StringIO
 from qdb.errors import QdbExecutionTimeout
 from qdb.utils import Timeout
 
@@ -106,7 +106,7 @@ class TracerTester(TestCase):
         db.cmd_manager.enqueue(lambda t: t.set_step())
 
         stepped = False
-        with Timeout(0.1, False, green=gevent):
+        with Timeout(0.1, False):
             db.set_trace()
             stepped = True
 
@@ -120,7 +120,7 @@ class TracerTester(TestCase):
         db.cmd_manager.user_wait(0.2)
 
         stepped = over_stepped = False
-        with Timeout(0.1, False, green=gevent):
+        with Timeout(0.1, False):
             db.set_trace()
             stepped = True
             over_stepped = True
@@ -149,7 +149,7 @@ class TracerTester(TestCase):
         def f():
             f_called.value = True
 
-        with Timeout(0.1, False, green=gevent):
+        with Timeout(0.1, False):
             db.set_trace()
             f()
 
@@ -174,7 +174,7 @@ class TracerTester(TestCase):
         db.cmd_manager.enqueue(lambda t: t.set_step())
         db.cmd_manager.user_wait(1.2)
 
-        with Timeout(0.1, False, green=gevent):
+        with Timeout(0.1, False):
             db.set_trace()
             f()
 
@@ -196,7 +196,7 @@ class TracerTester(TestCase):
         db.cmd_manager.user_wait(0.2)
 
         line_1 = line_2 = line_3 = False
-        with Timeout(0.1, False, green=gevent):
+        with Timeout(0.1, False):
             db.set_trace()
             line_1 = True  # EDIT IN BOTH PLACES
             line_2 = True
@@ -226,7 +226,7 @@ class TracerTester(TestCase):
         db.cmd_manager.enqueue(lambda t: t.set_continue())
         db.cmd_manager.user_wait(0.2)
         line_1 = line_2 = line_3 = False
-        with Timeout(0.1, False, green=gevent):
+        with Timeout(0.1, False):
             db.set_trace()
             line_1 = True
             line_2 = True
@@ -261,7 +261,7 @@ class TracerTester(TestCase):
         db.cmd_manager.enqueue(lambda t: t.set_continue())
         db.cmd_manager.user_wait(0.2)
         line_1 = line_2 = line_3 = False
-        with Timeout(0.1, False, green=gevent):
+        with Timeout(0.1, False):
             db.set_trace()
             line_1 = True
             line_2 = True
@@ -283,7 +283,7 @@ class TracerTester(TestCase):
         db = Qdb(cmd_manager=QueueCommandManager)
         db.cmd_manager.user_wait(0.2)
         line_1 = False
-        with Timeout(0.1, False, green=gevent):
+        with Timeout(0.1, False):
             db.set_trace()
             line_1 = True  # EDIT IN BOTH PLACES
 
@@ -304,7 +304,7 @@ class TracerTester(TestCase):
         )
         db.cmd_manager.user_wait(0.2)
         line_1 = line_2 = line_3 = False
-        with Timeout(0.1, False, green=gevent):
+        with Timeout(0.1, False):
             db.set_trace(stop=False)  # Should not stop us here.
             line_1 = True
             line_2 = True
@@ -320,7 +320,7 @@ class TracerTester(TestCase):
 
         db = Qdb(cmd_manager=NopCommandManager)
         line_1 = False
-        with Timeout(0.1, False, green=gevent):
+        with Timeout(0.1, False):
             db.set_trace(stop=False)
             line_1 = True
 
@@ -534,7 +534,7 @@ class TracerTester(TestCase):
             sys._getframe().f_lineno + line_offset,
             temporary=True,
         )
-        with Timeout(0.1, False, green=gevent):
+        with Timeout(0.1, False):
             db.set_trace(stop=False)
             while loop_counter < 10:
                 loop_counter += 1
@@ -564,7 +564,7 @@ class TracerTester(TestCase):
         db.set_trace(stop=False)
 
         continued = False
-        with Timeout(0.1, green=gevent):
+        with Timeout(0.1):
             db.set_trace(stop=False)
             for n in range(2):
                 pass

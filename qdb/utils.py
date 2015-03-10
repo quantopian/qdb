@@ -60,7 +60,7 @@ class QdbTimeout(QdbError):
             if t is u:
                 cleanup()
     """
-    def __init__(self, seconds, exception=None, green=False):
+    def __init__(self, seconds, exception=None, no_gevent=True):
         """
         seconds is the number of seconds to run this Timeout for.
         exception is the exception to raise in the case of a timeout.
@@ -143,15 +143,15 @@ if gevent is not None:
         _TimeoutMagic is really just a tuple that can be called to
         get a new Timeout that is either gevented or not.
         """
-        def __call__(self, seconds, exception=None, green=False):
+        def __call__(self, seconds, exception=None, no_gevent=False):
             """
             A timeout smart constructor that returns a
             gevent.Timeout or a QdbTimeout.
             """
-            if green:
-                timeout = gevent.Timeout
-            else:
+            if gevent is None or no_gevent:
                 timeout = QdbTimeout
+            else:
+                timeout = gevent.Timeout
 
             return timeout(seconds, exception)
 
@@ -168,7 +168,7 @@ if gevent is not None:
     # Also, because the __call__ has been overridden, you can get
     # the proper timeout by calling:
     #
-    # Timeout(seconds, green=is_green)
+    # Timeout(seconds)
     #
     # Timeout is capitalized because in almost all use cases you
     # can think of this as a class, even though there is a little

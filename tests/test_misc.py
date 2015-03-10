@@ -189,30 +189,30 @@ class TimeoutTester(TestCase):
         """
         Tests that the smart constructor returns the correct type.
         """
-        green = Timeout(1, green=True)
+        green = Timeout(1)
         self.assertTrue(isinstance(green, gevent.Timeout))
-        not_green = Timeout(1, green=False)
+        not_green = Timeout(1, no_gevent=True)
         self.assertTrue(isinstance(not_green, QdbTimeout))
 
     @parameterized.expand([(False,), (True,)])
-    def test_smart_constructor_can_catch(self, green):
+    def test_smart_constructor_can_catch(self, no_gevent):
         """
         Asserts that users may use the normal try/catch syntax with
         the Timeout smart constructor.
         This test will fail if except Timeout does NOT catch the exception.
         """
         try:
-            raise Timeout(1, green=green)
+            raise Timeout(1, no_gevent=no_gevent)
         except Timeout:
             pass
 
     @parameterized.expand([(False,), (True,)])
-    def test_timout_isinstance(self, green):
+    def test_timout_isinstance(self, no_gevent):
         """
         Asserts that the Timeout smart constructor returns are instances of
         Timeout.
         """
-        self.assertIsInstance(Timeout(1, green=green), Timeout)
+        self.assertIsInstance(Timeout(1, no_gevent=no_gevent), Timeout)
 
 
 class PrognTester(TestCase):
