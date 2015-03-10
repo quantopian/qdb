@@ -12,9 +12,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from qdb.compat import gevent
-if gevent is not None:
+try:
     from gevent.monkey import patch_all
+except ImportError:
+    pass
+else:
     patch_all()  # Patch out the modules before executing the tests.
 
 import os

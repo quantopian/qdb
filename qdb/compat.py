@@ -11,6 +11,9 @@
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
+import sys
+
+
 try:
     reduce = reduce
     PY2 = True
@@ -22,10 +25,7 @@ except NameError:
 PY3 = not PY2
 
 
-try:
-    import gevent
-except ImportError:
-    gevent = None
+gevent = sys.modules.get('gevent')
 
 
 if PY2:

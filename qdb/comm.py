@@ -30,7 +30,7 @@ import sys
 from contextlib2 import contextmanager
 from logbook import Logger
 
-from qdb.compat import StringIO, range, PY3, items, Connection
+from qdb.compat import StringIO, range, PY3, items, Connection, gevent
 from qdb.errors import (
     QdbFailedToConnect,
     QdbBreakpointReadError,
@@ -355,8 +355,7 @@ class RemoteCommandManager(CommandManager):
                   self.tracer.pause_signal),
         )
         with Timeout(5, QdbFailedToConnect(self.tracer.address,
-                                           self.tracer.retry_attepts),
-                     green=self.green):
+                                           self.tracer.retry_attepts)):
             # Receive a message to know that the reader is ready to begin.
             while True:
                 try:
