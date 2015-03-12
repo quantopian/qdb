@@ -29,8 +29,8 @@ class QueueCommandManager(CommandManager):
     A command manager that takes a queue of functions that act on
     the tracer and apply them one at a time with each call to next_command().
     """
-    def __init__(self, tracer):
-        super(QueueCommandManager, self).__init__(tracer)
+    def __init__(self):
+        super(QueueCommandManager, self).__init__()
         self.queue = Queue()
         self.sent = []
 
@@ -52,13 +52,13 @@ class QueueCommandManager(CommandManager):
         """
         self.queue = Queue()
 
-    def user_next_command(self):
+    def user_next_command(self, tracer):
         """
         Removes one message from the internal queue and apply it to the
         debugger.
         """
         try:
-            self.queue.get_nowait()(self.tracer)
+            self.queue.get_nowait()(tracer)
         except Empty:
             return
 
@@ -68,7 +68,7 @@ class QueueCommandManager(CommandManager):
 
     user_stop = clear
 
-    def start(self, auth_msg=''):
+    def start(self, tracer, auth_msg=''):
         pass
 
 
@@ -76,8 +76,8 @@ OutputMessage = namedtuple('OutputMessage', ['input_', 'exc', 'output'])
 
 
 class OutputCatchingNopCommandManager(NopCommandManager):
-    def __init__(self, tracer):
-        super(OutputCatchingNopCommandManager, self).__init__(tracer)
+    def __init__(self):
+        super(OutputCatchingNopCommandManager, self).__init__()
         self.msgs = []
 
     def send_print(self, input_, exc, output):

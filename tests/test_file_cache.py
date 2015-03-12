@@ -40,7 +40,7 @@ class QdbFileCacheTester(TestCase):
             line 4
             """
         )
-        db = Qdb(cmd_manager=NopCommandManager)
+        db = Qdb(cmd_manager=NopCommandManager())
         db.cache_file('file', contents=contents)
 
         # Check the whole 'file'.
@@ -59,7 +59,7 @@ class QdbFileCacheTester(TestCase):
         # the source code file; however, if we run this twice in a row, it
         # points to the byte-compiled file.
         filename = fix_filename(__file__)
-        db = Qdb(cmd_manager=NopCommandManager)
+        db = Qdb(cmd_manager=NopCommandManager())
         db.cache_file(filename)
 
         with open(filename) as f:

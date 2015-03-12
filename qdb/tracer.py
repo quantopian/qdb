@@ -14,6 +14,8 @@
 # limitations under the License.
 from bdb import Bdb, Breakpoint, checkfuncname, BdbQuit
 from contextlib import contextmanager
+from functools import partial
+from itertools import takewhile
 import json
 import signal
 import sys
@@ -22,15 +24,46 @@ from uuid import uuid4
 
 from logbook import Logger, FileHandler
 
-from qdb.comm import RemoteCommandManager, fmt_msg
-from qdb.compat import map, items, ExitStack
+from qdb.comm import TerminalCommandManager, fmt_msg
+from qdb.compat import map, items, ExitStack, StringIO
 from qdb.config import QdbConfig
-from qdb.errors import QdbUnreachableBreakpoint, QdbQuit, QdbExecutionTimeout
+from qdb.errors import (
+    QdbUnreachableBreakpoint,
+    QdbQuit,
+    QdbExecutionTimeout,
+    QdbPrognEndsInStatement,
+)
 from qdb.output import RemoteOutput, OutputTee
-from qdb.utils import Timeout, default_eval_fn, default_exception_serializer
+from qdb.utils import (
+    Timeout,
+    default_eval_fn,
+    default_exception_serializer,
+    progn,
+)
 
 
 log = Logger('Qdb')
+
+
+@contextmanager
+def capture_output():
+    """
+    Captures stdout and stderr for the duration of the body.
+    example
+    with capture_output() as (out, err):
+        print 'hello'
+    """
+    old_stdout = sys.stdout
+    old_stderr = sys.stderr
+    sys.stdout = StringIO()
+    sys.stderr = StringIO()
+    try:
+        yield sys.stdout, sys.stderr
+    finally:
+        sys.stdout.close()
+        sys.stderr.close()
+        sys.stdout = old_stdout
+        sys.stderr = old_stderr
 
 
 class Qdb(Bdb, object):
@@ -84,7 +117,6 @@ class Qdb(Bdb, object):
             default_exception_serializer
         self.eval_fn = config.eval_fn or default_eval_fn
         self._file_cache = {}
-        self.redirect_output = config.redirect_output
         self.retry_attepts = config.retry_attepts
         self.repr_fn = config.repr_fn
         self._skip_fn = config.skip_fn or (lambda _: False)
@@ -99,15 +131,17 @@ class Qdb(Bdb, object):
             self.log_handler = FileHandler(config.log_file)
             self.log_handler.push_application()
 
-        # The timing between these lines might matter depending on the
-        # cmd_manager. Don't seperate them.
-        self.cmd_manager = (config.cmd_manager or RemoteCommandManager)(self)
-        self.cmd_manager.start(config.auth_msg)
+        self.bound_cmd_manager = config.cmd_manager or TerminalCommandManager()
+        self.bound_cmd_manager.start(config.auth_msg)
 
         # We need to be able to send stdout back to the user debugging the
         # program. We hold a handle to this in case the program resets stdout.
         self._old_stdout = sys.stdout
         self._old_stderr = sys.stderr
+        self.redirect_output = (
+            config.redirect_output and
+            not isinstance(self.cmd_manager, TerminalCommandManager)
+        )
         if self.redirect_output:
             sys.stdout = OutputTee(
                 sys.stdout,
@@ -117,6 +151,25 @@ class Qdb(Bdb, object):
                 sys.stderr,
                 RemoteOutput(self.cmd_manager, '<stderr>'),
             )
+
+    def bound_cmd_manager():
+        def fget(self):
+            return self.__cmd_manager
+
+        class BoundCmdMangaer(object):
+            def __init__(self, tracer, cmd_manager):
+                self._tracer = tracer
+                self._cmd_manager = cmd_manager
+
+            def __getattr__(self, name):
+                return partial(getattr(self._cmd_manager, name), self._tracer)
+
+        def fset(self, value):
+            self.cmd_manager = value
+            self.__cmd_manager = BoundCmdMangaer(self, value)
+
+        return fget, fset
+    bound_cmd_manager = property(*bound_cmd_manager())
 
     def skip_fn(self, path):
         return self._skip_fn(self.canonic(path))
@@ -157,7 +210,7 @@ class Qdb(Bdb, object):
         # The line - 1 is so that querying line 1 gives us the first line in
         # the file.
         try:
-            return self._get_file_lines(filename)[line - 1]
+            return self.get_file_lines(filename)[line - 1]
         except IndexError:
             return 'No source available for this line.'
 
@@ -165,9 +218,9 @@ class Qdb(Bdb, object):
         """
         Retrieves a file out of cache or opens and caches it.
         """
-        return '\n'.join(self._get_file_lines(filename))
+        return '\n'.join(self.get_file_lines(filename))
 
-    def _get_file_lines(self, filename):
+    def get_file_lines(self, filename):
         """
         Retrieves the file from the file cache as a list of lines.
         If the file does not exist in the cache, it is cached from
@@ -403,24 +456,28 @@ class Qdb(Bdb, object):
 
     def user_line(self, stackframe):
         self.setup_stack(stackframe, None)
-        self.cmd_manager.send_watchlist()
-        self.cmd_manager.send_stack()
-        self.cmd_manager.next_command()
+        bound_cmd_manager = self.bound_cmd_manager
+        bound_cmd_manager.send_watchlist()
+        bound_cmd_manager.send_stack()
+        bound_cmd_manager.next_command()
 
     def user_return(self, stackframe, return_value):
         stackframe.f_locals['__return__'] = return_value
         self.setup_stack(stackframe, None)
-        self.cmd_manager.send_watchlist()
-        self.cmd_manager.send_stack()
-        msg = fmt_msg('return', str(return_value), serial=json.dumps)
-        self.cmd_manager.next_command(msg)
+        bound_cmd_manager = self.bound_cmd_manager
+        bound_cmd_manager.send_watchlist()
+        bound_cmd_manager.send_stack()
+        bound_cmd_manager.next_command(
+            fmt_msg('return', str(return_value), serial=json.dumps),
+        )
 
     def user_exception(self, stackframe, exc_info):
         exc_type, exc_value, exc_traceback = exc_info
         stackframe.f_locals['__exception__'] = exc_type, exc_value
         self.setup_stack(stackframe, exc_traceback)
-        self.cmd_manager.send_watchlist()
-        self.cmd_manager.send_stack()
+        bound_cmd_manager = self.bound_cmd_manager
+        bound_cmd_manager.send_watchlist()
+        bound_cmd_manager.send_stack()
         msg = fmt_msg(
             'exception', {
                 'type': exc_type.__name__,
@@ -429,7 +486,7 @@ class Qdb(Bdb, object):
             },
             serial=json.dumps,
         )
-        self.cmd_manager.next_command(msg)
+        self.bound_cmd_manager.next_command(msg)
 
     def do_clear(self, bpnum):
         """
@@ -444,6 +501,103 @@ class Qdb(Bdb, object):
         Sets the quitting state and restores the program state.
         """
         self.quitting = True
+
+    def eval_(self, code):
+        outexc = None
+        outmsg = None
+        with capture_output() as (out, err), \
+                self._new_execution_timeout(code), \
+                self.inject_default_namespace() as stackframe:
+            try:
+                if self.repr_fn:
+                    # Do some some custom single mode magic that lets us call
+                    # the repr function on the last expr.
+                    try:
+                        print(self.repr_fn(
+                            progn(
+                                code,
+                                self.eval_fn,
+                                stackframe,
+                            )
+                        ))
+                    except QdbPrognEndsInStatement:
+                        # Statements have no value to print.
+                        pass
+                else:
+                    self.eval_fn(
+                        code,
+                        stackframe,
+                        'single',
+                    )
+            except Exception as e:
+                outexc = type(e).__name__
+                outmsg = self.exception_serializer(e)
+            else:
+                outmsg = (out.getvalue()[:-1] if out.getvalue() and
+                          out.getvalue()[-1] == '\n' else out.getvalue())
+
+        if outexc is not None or outmsg is not None:
+            self.cmd_manager.send_print(code, outexc, outmsg)
+
+        self.update_watchlist()
+
+    def _stack_jump_to(self, index):
+        """
+        Jumps the stack to a specific index.
+        Raises an IndexError if the desired index does not exist.
+        """
+        # Try to jump here first. This could raise an IndexError which will
+        # prevent the tracer's state from being corrupted.
+        self.curframe = self.stack[index][0]
+
+        self.curindex = index
+        self.curframe_locals = self.curframe.f_locals
+        self.update_watchlist()
+
+    def stack_shift_direction(self, direction):
+        """
+        Shifts the stack up or down depending on dirction.
+        If direction is positive, travel up, if direction is negative, travel
+        down. If direction is 0, do nothing.
+        If you cannot shift in the desired direction, an IndexError will be
+        raised.
+        """
+        if direction == 0:
+            return  # nop
+
+        direction = -1 if direction > 0 else 1
+
+        # The substack is a stack were substack[n] is n + 1 frames away from
+        # curframe where we are traveling in the direction we want to shift.
+        if direction < 0:
+            # We are moving UP the stack:
+            # substack is the stack containing all frames above curframe.
+            substack = self.stack[self.curindex:0:direction]
+        else:
+            # We are moving DOWN the stack:
+            # substack is the stack containing all the frames below curframe.
+            substack = self.stack[self.curindex + 1:]
+
+        if not substack:
+            # If substack is empty, you are at the end of the stack, shifting
+            # in the desired direction is impossible.
+            raise IndexError('Shifted off the stack')
+
+        # Count the number of frames that we are not allowed to stop in.
+        # We add one at the end because there is an implied shift of at least
+        # one stackframe.
+        skip_fn = self.skip_fn
+        diff = sum(1 for _ in takewhile(
+            lambda fl: skip_fn(fl[0].f_code.co_filename),
+            substack,
+        )) + 1
+
+        idx = self.curindex + direction * diff
+        if skip_fn(self.stack[idx][0].f_code.co_filename):
+            # There are no frames to shift to.
+            raise IndexError('Shifted off the stack')
+
+        self._stack_jump_to(idx)
 
     def disable(self, mode='soft'):
         """
