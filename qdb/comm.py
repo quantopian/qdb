@@ -763,6 +763,8 @@ class ServerLocalCommandManager(RemoteCommandManager):
 class TerminalCommandManager(CommandManager):
     def __init__(self):
         super(TerminalCommandManager, self).__init__()
+        self._sticky = True
+        self._redraw = True
 
         # Side effectful imports ;_;
         import rlcompleter  # NOQA
@@ -784,27 +786,34 @@ class TerminalCommandManager(CommandManager):
     def writeln(self, msg=''):
         print_(msg)
 
+    def writeerr(self, msg=''):
+        self.writeln('*** error: ' + msg)
+
+    def missing_argument(self, cmd):
+        self.writeerr('{cmd}: missing argument(s)'.format(cmd=cmd))
+
     def unknown_event(self, e):
-        self.writeln('*** error: %s: unknown event type' % e)
+        self.writeerr('{0}: unknown event type'.format(e))
 
     def event_print(self, payload):
         out = payload['output']
         if out:
             self.writeln(
-                '%s%s' % ('***ERROR: ' if payload['exc'] else '', out),
+                '%s%s' % ('*** error: ' if payload['exc'] else '', out),
             )
 
     def event_stack(self, payload):
         frame = payload['stack'][payload['index']]  # Current frame
-        self.writeln('> %s:%d' % (frame['file'], frame['line']))
-        self.writeln('-> ' + frame['code'])
+        self.writeln('> {file}:{line}'.format(**frame))
+        if not self._sticky:
+            self.writeln('--> ' + frame['code'])
 
     def event_watchlist(self, payload):
         self.writeln('watchlist: [')
         for watched in payload:
             self.writeln(
                 '  > %s%s: %s'
-                % ('***ERROR: ' if watched['exc'] else '',
+                % ('*** error: ' if watched['exc'] else '',
                    watched['expr'], watched['value'])
             )
         self.writeln(']')
@@ -815,19 +824,16 @@ class TerminalCommandManager(CommandManager):
     def event_breakpoints(self, payload):
         self.writeln('breakpoints: [')
         for breakpoint in payload:
-            self.writeln('  > %s %d %s %s %s'
-                         % (breakpoint['file'],
-                            breakpoint['line'],
-                            breakpoint['temp'],
-                            breakpoint['cond'],
-                            breakpoint['func']))
+            self.writeln(
+                '  > {file} {line} {temp} {cond} {func}'.format(**breakpoint),
+            )
         self.writeln(']')
 
     def event_error(self, payload):
-        self.writeln('*** error: %s: %s' % (payload['type'], payload['data']))
+        self.writeerr('{0}: {1}'.format(payload['type'], payload['data']))
 
     def event_return(self, payload):
-        self.writeln('--> returning with %s' % payload)
+        self.writeln('---> returning with %s' % payload)
 
     def event_disabled(self, payload):
         self.writeln()
@@ -838,28 +844,38 @@ class TerminalCommandManager(CommandManager):
     def user_stop(self):
         pass
 
+    def prompt_user(self):
+        inp = input('(qdb) ').split(None, 1)
+        if not inp:
+            rl = self.readline
+            inp = rl.get_history_item(rl.get_current_history_length())
+        return inp
+
     def user_next_command(self, tracer):
+        if self._sticky and self._redraw:
+            self.do_list(None, tracer, recurse=False)
+        self._redraw = False
+
         try:
             while True:
                 try:
-                    inp = input('(qdb) ').split(None, 1)
+                    inp = self.prompt_user()
                     while not inp:
-                        inp = input('(qdb) ').split(None, 1)
+                        inp = self.prompt_user()
                     break
                 except KeyboardInterrupt:
-                    self.readline.insert_text('\n')
+                    self.writeln()
         except EOFError:
             inp = ('quit',)
 
         cmd = inp[0]
         if cmd.endswith('?') and hasattr(self, 'do_' + cmd[:-1]):
-            getattr(self, 'help_' + cmd[:-1])()
+            self.writeln(dedent(getattr(self, 'do_' + cmd[:-1]).__doc__))
             return self.user_next_command(tracer)
 
         command = getattr(self, 'do_' + cmd, None)
         if command is None:
-            tracer.eval_(' '.join(inp))
-            return self.next_command(tracer)
+            return self.do_print(' '.join(inp), tracer)
         else:
             try:
                 arg = inp[1]
@@ -868,107 +884,91 @@ class TerminalCommandManager(CommandManager):
 
             command(arg, tracer)
 
+    def do_print(self, arg, tracer):
+        """
+        p(rint)
+        Print the following expression
+        """
+        tracer.eval_(arg)
+        self.next_command(tracer)
+    do_p = do_print
+
     def do_step(self, arg, tracer):
+        """
+        s(tep)
+        Execute the next line, function call, or return.
+        """
+        self._redraw = True
         tracer.set_step()
     do_s = do_step
 
-    def help_step(self):
-        print_(dedent(
-            """\
-            s(tep)
-            Execute the next line, function call, or return.
-            """
-        ))
-    help_s = help_step
-
     def do_return(self, arg, tracer):
+        """
+        r(eturn)
+        Execute until the return event for the current stackframe.
+        """
+        self._redraw = True
         tracer.set_return(tracer.curframe)
     do_r = do_return
 
-    def help_return(self):
-        print_(dedent(
-            """\
-            r(eturn)
-            Execute until the return event for the current stackframe.
-            """
-        ))
-    help_r = help_return
-
     def do_next(self, arg, tracer):
+        """
+        n(ext)
+        Execute up to the next line in the current frame.
+        """
+        self._redraw = True
         tracer.set_next(tracer.curframe)
     do_n = do_next
 
-    def help_next(self):
-        print_(dedent(
-            """\
-            n(ext)
-            Execute up to the next line in the current frame.
-            """
-        ))
-    help_n = help_next
-
     def do_until(self, arg, tracer):
+        """
+        unt(il)
+        Execute until the line greater than the current is hit or until
+        you return from the current frame.
+        """
+        self._redraw = True
         tracer.set_until(tracer.curframe)
     do_unt = do_until
 
-    def help_until(self):
-        print_(dedent(
-            """\
-            unt(il)
-            Execute until the line greater than the current is hit or until
-            you return from the current frame.
-            """
-        ))
-    help_unt = help_until
-
     def do_continue(self, arg, tracer):
+        """
+        c(ontinue)
+        Continue execution until the next breakpoint is hit. If there are
+        no more breakpoints, stop tracing.
+        """
+        self._redraw = True
         tracer.set_continue()
     do_c = do_continue
 
-    def help_continue(self):
-        print_(dedent(
-            """\
-            c(ontinue)
-            Continue execution until the next breakpoint is hit. If there are
-            no more breakpoints, stop tracing.
-            """
-        ))
-    help_c = help_continue
-
     def do_watch(self, arg, tracer):
+        """
+        w(atch) EXPR
+        Adds an expression to the watchlist.
+        """
         if not arg:
             return self.missing_argument('w(atch)')
         tracer.extend_watchlist((arg,))
         return self.next_command(tracer)
     do_w = do_watch
 
-    def help_watch(self):
-        print_(dedent(
-            """\
-            w(atch) EXPR
-            Adds an expression to the watchlist.
-            """
-        ))
-    help_w = help_watch
-
     def do_unwatch(self, arg, tracer):
+        """
+        unw(atch) EXPR
+        Removes an expression from the watchlist if it is already being
+        watched, otherwise does nothing.
+        """
         if not arg:
             return self.missing_argument('unw(atch)')
         tracer.watchlist.pop(arg, None)
         return self.next_command(tracer)
     do_unw = do_unwatch
 
-    def help_unwatch(self):
-        print_(dedent(
-            """\
-            unw(atch) EXPR
-            Removes an expression from the watchlist if it is already being
-            watched, otherwise does nothing.
-            """
-        ))
-    help_unw = help_unwatch
-
     def do_break(self, arg, tracer, temp=False):
+        """
+        b(reak) BREAK-DICT
+        Adds a breakpoint with the form:
+        {'file': str, 'line': int, 'temp': bool, 'cond': str, 'func': str}
+        """
         if not arg:
             self.missing_argument('b(reak)')
             return
@@ -978,17 +978,13 @@ class TerminalCommandManager(CommandManager):
         return self.next_command(tracer)
     do_b = do_break
 
-    def help_break(self):
-        print_(dedent(
-            """\
-            b(reak) BREAK-DICT
-            Adds a breakpoint with the form:
-            {'file': str, 'line': int, 'temp': bool, 'cond': str, 'func': str}
-            """
-        ))
-    help_b = help_break
-
     def do_clear(self, arg, tracer):
+        """
+        cl(ear) BREAK-DICT
+        Clears a breakpoint with the form:
+        {'file': str, 'line': int, 'temp': bool, 'cond': str, 'func': str}
+        Only 'file' and 'line' are needed.
+        """
         if not arg:
             self.missing_argument('cl(ear)')
             return
@@ -998,39 +994,36 @@ class TerminalCommandManager(CommandManager):
         return self.next_command(tracer)
     do_cl = do_clear
 
-    def help_clear(self):
-        print_(dedent(
-            """\
-            cl(ear) BREAK-DICT
-            Clears a breakpoint with the form:
-            {'file': str, 'line': int, 'temp': bool, 'cond': str, 'func': str}
-            Only 'file' and 'line' are needed.
-            """
-        ))
-    help_cl = help_clear
-
     def do_tbreak(self, arg, tracer):
+        """
+        tbreak BREAK-DICT
+        Same as break, but with 'temp' defaulted to True.
+        """
         return self.do_break(arg, tracer, temp=True)
 
-    def help_tbreak(self):
-        print_(dedent(
-            """\
-            tbreak BREAK-DICT
-            Same as break, but with 'temp' defaulted to True.
-            """
-        ))
-
-    def do_list(self, arg, tracer):
+    def do_list(self, arg, tracer, recurse=True):
+        """
+        l(ist) FILE [START, [END]]
+        Shows the content of a file where START is the first line to show
+        and END is the last. This acts like a Python slice.
+        """
         start = end = None
         try:
-            start, end = map(int, arg or ())
-        except (ValueError, TypeError):
+            start, end = map(int, arg.split() if arg else ())
+        except (TypeError, ValueError):
             pass
 
-        def prepend(ix_l, curline=tracer.curframe.f_lineno):
-            ix, l = ix_l
+        curline = tracer.curframe.f_lineno
+        if start is None and end is None and arg != ':':
+            start = curline - 5
+            if start < 0:
+                start = 0
+            end = curline + 5
 
-            return ('%s  ' % ('-->' if ix == curline else '   ')) + l
+        def prepend(ix_l):
+            return (
+                '%s ' % ('-->' if ix_l[0] == curline else '   ')
+            ) + ix_l[1]
 
         self.writeln(
             '\n'.join(
@@ -1040,53 +1033,38 @@ class TerminalCommandManager(CommandManager):
                         tracer.get_file_lines(
                             tracer.curframe.f_code.co_filename,
                         )[start:end],
-                        1 if start is None else start,
+                        1 if start is None else start + 1,
                     )
                 )
             ),
         )
-        return self.next_command(tracer)
+        if recurse:
+            self.next_command(tracer)
     do_l = do_list
 
-    def help_list(self):
-        self.writeln(dedent(
-            """\
-            l(ist) FILE [START, [END]]
-            Shows the content of a file where START is the first line to show
-            and END is the last. This acts like a Python slice.
-            """
-        ))
-    help_l = help_list
-
     def do_up(self, arg, tracer):
+        """
+        u(p)
+        Steps up a stackframe if possible.
+        """
         tracer.stack_shift_direction(+1)
         return self.next_command(tracer)
     do_u = do_up
 
-    def help_up(self):
-        self.writeln(dedent(
-            """\
-            u(p)
-            Steps up a stackframe if possible.
-            """
-        ))
-    help_u = help_up
-
     def do_down(self, arg, tracer):
+        """
+        d(own)
+        Steps down a stackframe if possible.
+        """
         tracer.stack_shift_direction(-1)
         return self.next_command(tracer)
     do_d = do_down
 
-    def help_down(self):
-        print_(dedent(
-            """\
-            d(own)
-            Steps down a stackframe if possible.
-            """
-        ))
-    help_d = help_down
-
     def do_locals(self, arg, tracer):
+        """
+        locals
+        Report back the current stackframe's locals.
+        """
         self.writeln('locals: [')
         for p in items(tracer.curframe_locals):
             self.writeln('  %s=%s' % p)
@@ -1094,28 +1072,23 @@ class TerminalCommandManager(CommandManager):
 
         return self.next_command(tracer)
 
-    def help_locals(self):
-        print_(dedent(
-            """\
-            locals
-            Report back the current stackframe's locals.
-            """
-        ))
-
     def do_quit(self, arg, tracer):
+        """
+        q(uit) [MODE]
+        Stops the debugging session with the given mode, defaulting to
+        'soft'.
+        """
         if not arg or arg in ('soft', 'hard'):
             tracer.disable(arg or 'hard')
         else:
-            print_(
-                '*** error: disable: argument must be \'soft\' or \'hard\'',
-            )
+            self.writeerr("disable: argument must be 'soft' or 'hard'")
 
-    def help_quit(self):
-        print_(dedent(
-            """
-            q(uit) [MODE]
-            Stops the debugging session with the given mode, defaulting to
-            'soft'.
-            """
-        ))
-    help_q = help_quit
+    def do_sticky(self, arg, tracer):
+        """
+        sticky
+        Toggle sticky mode; printing the current context after every step.
+        """
+        self._sticky = not self._sticky
+        if self._sticky:
+            return self.do_list(None, tracer)
+        return self.next_command(tracer)
