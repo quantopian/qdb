@@ -26,3 +26,6 @@ test:
 requirements:
 	pip install -r etc/requirements_dev.txt
 	pip install -r etc/requirements.txt
+ifeq ($(shell python -c 'import sys;print(sys.version_info.major)'),2)
+	pip install -r etc/requirements_gevent.txt
+endif

@@ -1,4 +1,5 @@
 # qdb #
+[![build status](https://travis-ci.org/quantopian/qdb.png?branch=master)](https://travis-ci.org/quantopian/qdb)
 [![Gitter](https://badges.gitter.im/Join Chat.svg)](https://gitter.im/quantopian/qdb?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
 
 

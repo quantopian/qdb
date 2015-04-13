@@ -16,22 +16,29 @@ from functools import partial
 from pprint import pformat
 import signal
 import sys
+from time import sleep
 from unittest import TestCase
 
-from gevent import Timeout, sleep
-from mock import MagicMock, patch
 from nose_parameterized import parameterized
 
 from qdb import Qdb
 from qdb.comm import RemoteCommandManager, ServerLocalCommandManager, fmt_msg
+from qdb.compat import PY2, gevent
 from qdb.errors import (
     QdbFailedToConnect,
     QdbAuthenticationError,
     QdbExecutionTimeout,
 )
-from qdb.server import QdbServer
 
 from tests import fix_filename
+from tests.compat import mock, skip_py3
+
+
+if PY2:
+    from qdb.server import QdbServer
+
+patch = mock.patch
+MagicMock = mock.MagicMock
 
 
 def set_break_params(tracer, filename, lineno, temporary=False, cond=None,
@@ -55,6 +62,7 @@ class RemoteCommandManagerTester(TestCase):
     to. Some tests rely on how the command manager affects the tracer that it
     is managing.
     """
+    @skip_py3
     @classmethod
     def setUpClass(cls):
         """
@@ -184,7 +192,7 @@ class RemoteCommandManagerTester(TestCase):
             uuid=tracer.uuid,
             event=fmt_msg(event, payload)
         )
-        with Timeout(0.1, False):
+        with gevent.Timeout(0.1, False):
             cmd_manager.next_command()
         tracer.start.assert_called()  # Start always gets called.
         attrgetter_(tracer).assert_called()
@@ -213,7 +221,7 @@ class RemoteCommandManagerTester(TestCase):
             event=fmt_msg('locals')
         )
 
-        with Timeout(0.1, False):
+        with gevent.Timeout(0.1, False):
             cmd_manager.next_command()
         self.assertTrue(command_locals_called[0])
 
@@ -571,6 +579,7 @@ class ServerLocalCommandManagerTester(RemoteCommandManagerTester):
     the ServerLocalCommandManager. This makes sure that the same behavior holds
     for the two types of command managers.
     """
+    @skip_py3
     @classmethod
     def setUpClass(cls):
         cls.setup_server()

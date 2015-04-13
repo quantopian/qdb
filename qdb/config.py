@@ -17,7 +17,8 @@ from itertools import chain, repeat
 import os
 
 from logbook import Logger
-from six.moves import zip, reduce
+
+from qdb.compat import reduce, zip
 
 
 def _coerce_dict(dict_like):

@@ -1,5 +1,5 @@
 #
-# Copyright 2014 Quantopian, Inc.
+# Copyright 2015 Quantopian, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,22 +11,25 @@
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
-# limitations under the License.
+from unittest import skipIf
+from qdb.compat import PY3
+
 try:
-    from gevent.monkey import patch_all
+    from unittest import mock
 except ImportError:
-    pass
-else:
-    patch_all()  # Patch out the modules before executing the tests.
-
-import os
+    import mock
 
 
-def fix_filename(filename):
-    """
-    Fixes the __file__ attribute to make tests work even after being byte
-    compiled.
-    """
-    return os.path.abspath(
-        filename[:-1] if filename.endswith('.pyc') else filename
-    )
+class NonLocal(object):
+    def __init__(self, value):
+        self.value = value
+
+
+skip_py3 = skipIf(PY3, 'This test will not work with python3')
+
+
+__all__ = [
+    'NonLocal',
+    'mock',
+    'skip_py3',
+]

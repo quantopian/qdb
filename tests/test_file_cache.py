@@ -12,12 +12,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License
-from itertools import count, izip
+from itertools import count
 from textwrap import dedent
 from unittest import TestCase
 
 from qdb import Qdb
 from qdb.comm import NopCommandManager
+from qdb.compat import zip, range
 
 from tests import fix_filename
 
@@ -45,7 +46,7 @@ class QdbFileCacheTester(TestCase):
         # Check the whole 'file'.
         self.assertEquals(db.get_file('file'), contents[:-1])  # drop '\n'
 
-        for n in xrange(1, 5):
+        for n in range(1, 5):
             # Check all the lines.
             self.assertEquals('line %d' % n, db.get_line('file', n))
 
@@ -67,7 +68,7 @@ class QdbFileCacheTester(TestCase):
             # Assert that querying the entire file works.
             self.assertEquals(db.get_file(filename), contents)
 
-            for n, line in izip(count(start=1), contents.splitlines()):
+            for n, line in zip(count(start=1), contents.splitlines()):
                 # Iterate over all the lines of the file, asserting that we
                 # have saved them correctly. This also asserts that the line
                 # indexing is working as intended.

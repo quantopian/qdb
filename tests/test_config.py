@@ -98,7 +98,7 @@ class QdbConfigTester(TestCase):
         Tests reading an extra config file.
         """
         with NamedTemporaryFile(dir=self.home) as t:
-            t.write(self.contents)
+            t.write(self.contents.encode('utf-8'))
             t.flush()
 
             self._test_file(files=(t.name,))

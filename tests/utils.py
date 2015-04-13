@@ -13,15 +13,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from collections import namedtuple
-import gevent
-from gevent.queue import Queue, Empty
+import json
+from time import sleep
 
 from qdb.comm import CommandManager, NopCommandManager
+from qdb.compat import PY3
 
-try:
-    import cPickle as pickle
-except ImportError:
-    import pickle
+if PY3:
+    from queue import Queue, Empty
+else:
+    from Queue import Queue, Empty
 
 
 class QueueCommandManager(CommandManager):
@@ -44,7 +45,7 @@ class QueueCommandManager(CommandManager):
         """
         Simulates waiting on the user to feed us input for duration seconds.
         """
-        self.enqueue(lambda t: gevent.sleep(duration))
+        self.enqueue(lambda t: sleep(duration + 1))
 
     def clear(self):
         """
@@ -64,7 +65,7 @@ class QueueCommandManager(CommandManager):
 
     def send(self, msg):
         # Collect the output so that we can make assertions about it.
-        self.sent.append(pickle.loads(msg))
+        self.sent.append(json.loads(msg))
 
     user_stop = clear
 
