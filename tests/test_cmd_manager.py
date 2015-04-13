@@ -31,7 +31,7 @@ from qdb.errors import (
 )
 
 from tests import fix_filename
-from tests.compat import mock, skip_py3, NonLocal
+from tests.compat import mock, skip_py3, NonLocal, Py2TestMeta
 
 
 if PY2:
@@ -385,7 +385,7 @@ class RemoteCommandManagerTester(with_metaclass(Py2TestMeta, TestCase)):
         """
         prints = []
 
-        class cmd_manager(self.cmd_manager):
+        class cmd_manager(type(self.cmd_manager)):
             """
             Captures print commands to make assertions on them.
             """
@@ -398,7 +398,7 @@ class RemoteCommandManagerTester(with_metaclass(Py2TestMeta, TestCase)):
 
         db = Qdb(
             uuid='eval_test',
-            cmd_manager=cmd_manager,
+            cmd_manager=cmd_manager(),
             host=self.tracer_host,
             port=self.tracer_port,
             redirect_output=False,
@@ -591,5 +591,5 @@ class ServerLocalCommandManagerTester(RemoteCommandManagerTester):
     the ServerLocalCommandManager. This makes sure that the same behavior holds
     for the two types of command managers.
     """
-    def setup(self):
+    def setUp(self):
         self.cmd_manager = ServerLocalCommandManager()

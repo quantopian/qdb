@@ -21,7 +21,7 @@ import errno
 from functools import partial
 import json
 import os
-from pprint import pformat, pprint
+from pprint import pprint
 import signal
 import socket
 from struct import pack, unpack
@@ -461,7 +461,13 @@ class RemoteCommandManager(CommandManager):
     def command_continue(self, tracer, payload):
         tracer.set_continue()
 
-    def command_eval(self, tracer, payload):
+    def command_pprint(self, tracer, payload):
+        """
+        Evaluates the expression with the pretty printer.
+        """
+        return self.command_eval(tracer, payload, pprint=True)
+
+    def command_eval(self, tracer, payload, pprint=False):
         """
         Evaluates and expression in tracer.curframe, reevaluates the
         watchlist, and defers to user control.
@@ -469,7 +475,7 @@ class RemoteCommandManager(CommandManager):
         if not self.payload_check(payload, 'eval'):
             return self.next_command(tracer)
 
-        tracer.eval_(payload)
+        tracer.eval_(payload, pprint)
         self.send_watchlist(tracer)
         self.next_command(tracer)
 
@@ -741,7 +747,7 @@ class ServerLocalCommandManager(RemoteCommandManager):
         """
         Begins processing commands from the server.
         """
-        self._socket_connect()
+        self._socket_connect(tracer)
         self.send(
             fmt_msg(
                 'start', {

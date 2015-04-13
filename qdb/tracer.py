@@ -17,6 +17,7 @@ from contextlib import contextmanager
 from functools import partial
 from itertools import takewhile
 import json
+from pprint import pformat
 import signal
 import sys
 import traceback
@@ -502,33 +503,39 @@ class Qdb(Bdb, object):
         """
         self.quitting = True
 
-    def eval_(self, code):
+    def eval_(self, code, pprint=False):
+        repr_fn = self.repr_fn
+
         outexc = None
         outmsg = None
         with capture_output() as (out, err), \
                 self._new_execution_timeout(code), \
                 self.inject_default_namespace() as stackframe:
             try:
-                if self.repr_fn:
-                    # Do some some custom single mode magic that lets us call
-                    # the repr function on the last expr.
-                    try:
-                        print(self.repr_fn(
-                            progn(
-                                code,
-                                self.eval_fn,
-                                stackframe,
-                            )
-                        ))
-                    except QdbPrognEndsInStatement:
-                        # Statements have no value to print.
-                        pass
-                else:
+                if not repr_fn and not pprint:
                     self.eval_fn(
                         code,
                         stackframe,
                         'single',
                     )
+                else:
+                    try:
+                        # Do some some custom single mode magic that lets us
+                        # call the repr function on the last expr.
+                        value = progn(
+                            code,
+                            self.eval_fn,
+                            stackframe,
+                        )
+                    except QdbPrognEndsInStatement:
+                        # Statements have no value to print.
+                        pass
+                    else:
+                        if pprint:
+                            value = pformat(value)
+                        if repr_fn:
+                            value = repr_fn(value)
+                        print(value)
             except Exception as e:
                 outexc = type(e).__name__
                 outmsg = self.exception_serializer(e)
