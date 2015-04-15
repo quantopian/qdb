@@ -198,11 +198,10 @@ NO_REGISTER_STATEMENTS = frozenset((
 
     ast.Global,
     ast.Pass,
-
-    # Python 2 only
-    ast.Print if PY2 else None,
-    ast.Repr if PY2 else None,
 ))
+
+if PY2:
+    NO_REGISTER_STATEMENTS |= {ast.Print, ast.Repr}
 
 
 # Matches valid python names.
