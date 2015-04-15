@@ -540,8 +540,7 @@ class Qdb(Bdb, object):
                 outexc = type(e).__name__
                 outmsg = self.exception_serializer(e)
             else:
-                outmsg = (out.getvalue()[:-1] if out.getvalue() and
-                          out.getvalue()[-1] == '\n' else out.getvalue())
+                outmsg = out.getvalue().rstrip('\n')
 
         if outexc is not None or outmsg is not None:
             self.cmd_manager.send_print(code, outexc, outmsg)
