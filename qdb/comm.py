@@ -1053,7 +1053,13 @@ class TerminalCommandManager(CommandManager):
         u(p)
         Steps up a stackframe if possible.
         """
-        tracer.stack_shift_direction(+1)
+        try:
+            tracer.stack_shift_direction(+1)
+        except IndexError:
+            self.writeerr('up: top of stack')
+        else:
+            self.do_list(None, tracer, recurse=False)
+
         return self.next_command(tracer)
     do_u = do_up
 
@@ -1062,7 +1068,13 @@ class TerminalCommandManager(CommandManager):
         d(own)
         Steps down a stackframe if possible.
         """
-        tracer.stack_shift_direction(-1)
+        try:
+            tracer.stack_shift_direction(-1)
+        except IndexError:
+            self.writeerr('down: bottom of stack')
+        else:
+            self.do_list(None, tracer, recurse=False)
+
         return self.next_command(tracer)
     do_d = do_down
 
