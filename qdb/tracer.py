@@ -249,10 +249,7 @@ class Qdb(Bdb, object):
             return True
         try:
             with open(canonic_name, 'r') as f:
-                self._file_cache[canonic_name] = tuple(map(
-                    lambda l: l[:-1] if l.endswith('\n') else l,
-                    f.readlines()
-                ))
+                self._file_cache[canonic_name] = f.read().splitlines()
                 return True
         except IOError:
             # The caching operation failed.
