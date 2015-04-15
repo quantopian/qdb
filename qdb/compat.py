@@ -13,8 +13,6 @@
 # See the License for the specific language governing permissions and
 from __future__ import print_function
 
-import sys
-
 
 try:
     reduce = reduce
@@ -25,8 +23,6 @@ except NameError:
 
 
 PY3 = not PY2
-
-gevent = sys.modules.get('gevent')
 
 try:
     import gevent
