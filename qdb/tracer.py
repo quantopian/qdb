@@ -561,7 +561,7 @@ class Qdb(Bdb, object):
 
     def stack_shift_direction(self, direction):
         """
-        Shifts the stack up or down depending on dirction.
+        Shifts the stack up or down depending on direction.
         If direction is positive, travel up, if direction is negative, travel
         down. If direction is 0, do nothing.
         If you cannot shift in the desired direction, an IndexError will be
@@ -584,7 +584,7 @@ class Qdb(Bdb, object):
 
         if target is None:
             raise IndexError('Shifted off the stack')
-        self._stack_jump_to(curindex)
+        self._stack_jump_to(target)
 
     def disable(self, mode='soft'):
         """
