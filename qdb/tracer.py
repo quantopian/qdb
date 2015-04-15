@@ -15,7 +15,6 @@
 from bdb import Bdb, Breakpoint, checkfuncname, BdbQuit
 from contextlib import contextmanager
 from functools import partial
-from itertools import takewhile
 import json
 from pprint import pformat
 import signal
@@ -571,39 +570,21 @@ class Qdb(Bdb, object):
         if direction == 0:
             return  # nop
 
-        direction = -1 if direction > 0 else 1
-
-        # The substack is a stack where substack[n] is n + 1 frames away from
-        # curframe where we are traveling in the direction we want to shift.
-        if direction < 0:
-            # We are moving UP the stack:
-            # substack is the stack containing all frames above curframe.
-            substack = self.stack[self.curindex:0:direction]
-        else:
-            # We are moving DOWN the stack:
-            # substack is the stack containing all the frames below curframe.
-            substack = self.stack[self.curindex + 1:]
-
-        if not substack:
-            # If substack is empty, you are at the end of the stack, shifting
-            # in the desired direction is impossible.
-            raise IndexError('Shifted off the stack')
-
-        # Count the number of frames that we are not allowed to stop in.
-        # We add one at the end because there is an implied shift of at least
-        # one stackframe.
+        stride = -1 if direction > 0 else 1
+        stack = self.stack
+        stacksize = len(stack)
+        curindex = self.curindex
         skip_fn = self.skip_fn
-        diff = sum(1 for _ in takewhile(
-            lambda fl: skip_fn(fl[0].f_code.co_filename),
-            substack,
-        )) + 1
+        target = None
+        while 0 < curindex < stacksize:
+            curindex += stride
+            if not skip_fn(stack[curindex][0].f_code.co_filename):
+                target = curindex
+                break
 
-        idx = self.curindex + direction * diff
-        if skip_fn(self.stack[idx][0].f_code.co_filename):
-            # There are no frames to shift to.
+        if target is None:
             raise IndexError('Shifted off the stack')
-
-        self._stack_jump_to(idx)
+        self._stack_jump_to(curindex)
 
     def disable(self, mode='soft'):
         """
