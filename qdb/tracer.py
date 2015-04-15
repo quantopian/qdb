@@ -573,7 +573,7 @@ class Qdb(Bdb, object):
 
         direction = -1 if direction > 0 else 1
 
-        # The substack is a stack were substack[n] is n + 1 frames away from
+        # The substack is a stack where substack[n] is n + 1 frames away from
         # curframe where we are traveling in the direction we want to shift.
         if direction < 0:
             # We are moving UP the stack:
