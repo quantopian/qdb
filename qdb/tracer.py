@@ -26,7 +26,7 @@ from uuid import uuid4
 from logbook import Logger, FileHandler
 
 from qdb.comm import TerminalCommandManager, fmt_msg
-from qdb.compat import map, items, ExitStack, StringIO
+from qdb.compat import items, ExitStack, StringIO
 from qdb.config import QdbConfig
 from qdb.errors import (
     QdbUnreachableBreakpoint,
@@ -44,6 +44,19 @@ from qdb.utils import (
 
 
 log = Logger('Qdb')
+
+
+class BoundCmdManager(object):
+    """
+    Binds the tracer to the first argument of all the methods of the
+    command manager.
+    """
+    def __init__(self, tracer, cmd_manager):
+        self._tracer = tracer
+        self._cmd_manager = cmd_manager
+
+    def __getattr__(self, name):
+        return partial(getattr(self._cmd_manager, name), self._tracer)
 
 
 @contextmanager
@@ -153,24 +166,14 @@ class Qdb(Bdb, object):
                 RemoteOutput(self.cmd_manager, '<stderr>'),
             )
 
-    def bound_cmd_manager():
-        def fget(self):
-            return self.__cmd_manager
+    @property
+    def bound_cmd_manager(self):
+        return self.__cmd_manager
 
-        class BoundCmdMangaer(object):
-            def __init__(self, tracer, cmd_manager):
-                self._tracer = tracer
-                self._cmd_manager = cmd_manager
-
-            def __getattr__(self, name):
-                return partial(getattr(self._cmd_manager, name), self._tracer)
-
-        def fset(self, value):
-            self.cmd_manager = value
-            self.__cmd_manager = BoundCmdMangaer(self, value)
-
-        return fget, fset
-    bound_cmd_manager = property(*bound_cmd_manager())
+    @bound_cmd_manager.setter
+    def bound_cmd_manager(self, value):
+        self.cmd_manager = value
+        self.__cmd_manager = BoundCmdManager(self, value)
 
     def skip_fn(self, path):
         return self._skip_fn(self.canonic(path))
