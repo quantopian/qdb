@@ -584,6 +584,28 @@ class RemoteCommandManagerTester(with_metaclass(Py2TestMeta, TestCase)):
 
         self.server.session_store.slaughter(db.uuid)
 
+    def test_why_are_you_executing_all_these_commands(self):
+        db = Qdb(
+            uuid='send_stack_test',
+            cmd_manager=self.cmd_manager,
+            host=self.tracer_host,
+            port=self.tracer_port,
+            redirect_output=False,
+            green=True,
+        )
+        sleep(0.01)
+        for n in range(sys.getrecursionlimit()):
+            self.server.session_store.send_to_tracer(
+                uuid=db.uuid,
+                event=fmt_msg('eval', 'None')
+            )
+        self.server.session_store.send_to_tracer(
+            uuid=db.uuid,
+            event=fmt_msg('continue')
+        )
+        with gevent.Timeout(1):
+            db.set_trace(stop=True)
+
 
 class ServerLocalCommandManagerTester(RemoteCommandManagerTester):
     """

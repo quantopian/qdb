@@ -17,6 +17,7 @@ import re
 import signal as signal_module
 import sys
 import tokenize
+from types import MethodType
 
 from uuid import uuid4
 
@@ -320,3 +321,47 @@ def progn(src, eval_fn=None, stackframe=None):
     except KeyError:
         # There was no final expression.
         raise QdbPrognEndsInStatement(src)
+
+
+class tco(object):
+    """
+    Emulates explicit tail call optmization.
+
+    example:
+
+      @tco
+      def prod(ns, a=1):
+          n = ns[0]
+          if n == 0:
+              return 0
+          if not ns:
+              return a
+          return prod.tailcall(ns[1:], n * a)
+
+    """
+    def __init__(self, f):
+        self._f = f
+        self.__name__ = f.__name__
+
+    def __call__(self, *args, **kwargs):
+        f = self._f
+        ret = f(*args, **kwargs)
+        while type(ret) is _tcreturn:
+            ret = ret()
+        return ret
+
+    def __get__(self, instance, owner):
+        return tco(MethodType(self._f, instance, owner))
+
+    def tailcall(self, *args, **kwargs):
+        return _tcreturn(self._f, args, kwargs)
+
+
+class _tcreturn(object):
+    def __init__(self, f, args, kwargs):
+        self._f = f
+        self._args = args
+        self._kwargs = kwargs
+
+    def __call__(self):
+        return self._f(*self._args, **self._kwargs)

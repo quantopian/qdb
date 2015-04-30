@@ -486,7 +486,7 @@ class Qdb(Bdb, object):
             },
             serial=json.dumps,
         )
-        self.bound_cmd_manager.next_command(msg)
+        return self.bound_cmd_manager.next_command(msg)
 
     def do_clear(self, bpnum):
         """
@@ -576,7 +576,7 @@ class Qdb(Bdb, object):
         curindex = self.curindex
         skip_fn = self.skip_fn
         target = None
-        while 0 < curindex < stacksize:
+        while (0 - (direction < 0)) < curindex < (stacksize + (direction < 0)):
             curindex += stride
             if not skip_fn(stack[curindex][0].f_code.co_filename):
                 target = curindex

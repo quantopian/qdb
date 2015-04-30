@@ -28,6 +28,7 @@ from qdb.utils import (
     Timeout,
     QdbTimeout,
     progn,
+    tco,
 )
 
 from tests.compat import mock, skip_py3
@@ -304,3 +305,26 @@ class PrognTester(TestCase):
         self.assertIsInstance(call_args[0], ast.Module)
         self.assertEqual(call_args[1], sys._getframe())
         self.assertEqual(call_args[2], 'exec')
+
+
+class TcoTester(TestCase):
+    def test_tco_too_many_frames(self):
+        frames = sys.getrecursionlimit()
+
+        def f(n):
+            if not n:
+                return None
+            return f(n - 1)
+
+        # Make sure this is actually too many frames.
+        with self.assertRaises(RuntimeError):
+            f(frames)
+
+        @tco
+        def g(n):
+            if not n:
+                return None
+            return g.tailcall(n - 1)
+
+        # Show that the tco version can handle the same number of frames.
+        self.assertIsNone(g(frames))

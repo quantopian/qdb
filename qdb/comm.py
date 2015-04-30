@@ -37,7 +37,7 @@ from qdb.errors import (
     QdbUnreachableBreakpoint,
     QdbAuthenticationError,
 )
-from qdb.utils import Timeout
+from qdb.utils import Timeout, tco
 
 log = Logger('Qdb')
 
@@ -183,6 +183,7 @@ class CommandManager(object):
         """
         self.send(fmt_msg(event, payload, serial=json.dumps))
 
+    @tco
     def next_command(self, tracer, msg=None):
         """
         Processes the next command from the user.
@@ -191,7 +192,7 @@ class CommandManager(object):
         """
         if msg:
             self.send(msg)
-        self.user_next_command(tracer)
+        return self.user_next_command(tracer)
 
     @abstractmethod
     def send(self, msg):
@@ -473,29 +474,29 @@ class RemoteCommandManager(CommandManager):
         watchlist, and defers to user control.
         """
         if not self.payload_check(payload, 'eval'):
-            return self.next_command(tracer)
+            return self.next_command.tailcall(tracer)
 
         tracer.eval_(payload, pprint)
         self.send_watchlist(tracer)
-        self.next_command(tracer)
+        return self.next_command.tailcall(tracer)
 
     def command_set_watch(self, tracer, payload):
         """
         Extends the watchlist and defers to user control.
         """
         if not self.payload_check(payload, 'set_watch'):
-            return self.next_command(tracer)
+            return self.next_command.tailcall(tracer)
 
         tracer.extend_watchlist(*payload)
         self.send_watchlist(tracer)
-        self.next_command(tracer)
+        return self.next_command.tailcall(tracer)
 
     def command_clear_watch(self, tracer, payload):
         """
         Clears expressions from the watchlist and defers to user control.
         """
         if not self.payload_check(payload, 'clear_watch'):
-            return self.next_command(tracer)
+            return self.next_command.tailcall(tracer)
 
         for w in payload:
             # Default to None so that clearing values that have not been set
@@ -503,19 +504,19 @@ class RemoteCommandManager(CommandManager):
             tracer.watchlist.pop(w, None)
 
         self.send_watchlist(tracer)
-        self.next_command(tracer)
+        return self.next_command.tailcall(tracer)
 
     def command_set_break(self, tracer, payload):
         """
         Sets a breakpoint and defers to user control.
         """
         if not self.payload_check(payload, 'set_break'):
-            return self.next_command(tracer)
+            return self.next_command.tailcall(tracer)
         try:
             breakpoint = self.fmt_breakpoint_dict(tracer, payload)
         except QdbBreakpointReadError as b:
             err_msg = fmt_err_msg('set_break', str(b), serial=json.dumps)
-            return self.next_command(tracer, err_msg)
+            return self.next_command.tailcall(tracer, err_msg)
 
         err_msg = None
         try:
@@ -527,29 +528,29 @@ class RemoteCommandManager(CommandManager):
                 serial=json.dumps
             )
 
-        return self.next_command(tracer, err_msg)
+        return self.next_command.tailcall(tracer, err_msg)
 
     def command_clear_break(self, tracer, payload):
         """
         Clears a breakpoint and defers to user control.
         """
         if not self.payload_check(payload, 'clear_break'):
-            return self.next_command(tracer)
+            return self.next_command.tailcall(tracer)
         try:
             breakpoint = self.fmt_breakpoint_dict(payload)
         except QdbBreakpointReadError as b:
             err_msg = fmt_err_msg('clear_break', str(b), serial=json.dumps)
-            return self.next_command(tracer, err_msg)
+            return self.next_command.tailcall(tracer, err_msg)
 
         tracer.clear_break(**breakpoint)
-        self.next_command(tracer)
+        return self.next_command.tailcall(tracer)
 
     def command_list(self, tracer, payload):
         """
         List the contents of a file and defer to user control.
         """
         if not self.payload_check(payload, 'list'):
-            return self.next_command(tracer)
+            return self.next_command.tailcall(tracer)
 
         filename = payload.get('file') or tracer.default_file
         try:
@@ -587,7 +588,7 @@ class RemoteCommandManager(CommandManager):
                 serial=json.dumps
             )
 
-        self.next_command(msg)
+        return self.next_command.tailcall(msg)
 
     def command_up(self, tracer, payload):
         """
@@ -602,7 +603,7 @@ class RemoteCommandManager(CommandManager):
 
         self.send_watchlist(tracer)
         self.send_stack(tracer)
-        self.next_command(tracer)
+        return self.next_command.tailcall(tracer)
 
     def command_down(self, tracer, payload):
         """
@@ -617,14 +618,14 @@ class RemoteCommandManager(CommandManager):
 
         self.send_watchlist(tracer)
         self.send_stack(tracer)
-        self.next_command(tracer)
+        return self.next_command.tailcall(tracer)
 
     def command_locals(self, tracer, payload):
         """
         Sends back the current frame locals and defer to user control.
         """
         self.send_event('locals', tracer.curframe_locals)
-        self.next_command(tracer)
+        return self.next_command.tailcall(tracer)
 
     def command_start(self, tracer, payload):
         """
@@ -633,21 +634,21 @@ class RemoteCommandManager(CommandManager):
         self.send_breakpoints(tracer)
         self.send_watchlist(tracer)
         self.send_stack(tracer)
-        self.next_command(tracer)
+        return self.next_command.tailcall(tracer)
 
     def command_disable(self, tracer, payload):
         """
         Disables the tracer.
         """
         if not self.payload_check(payload, 'disable'):
-            return self.next_command(tracer)
+            return self.next_command.tailcall(tracer)
         if payload not in ['soft', 'hard']:
             err_msg = fmt_err_msg(
                 'disable',
                 "payload must be either 'soft' or 'hard'",
                 serial=json.dumps
             )
-            return self.next_command(err_msg)
+            return self.next_command.tailcall(err_msg)
         tracer.disable(payload)
 
 
@@ -888,7 +889,7 @@ class TerminalCommandManager(CommandManager):
             except IndexError:
                 arg = None
 
-            command(arg, tracer)
+            return command(arg, tracer)
 
     def do_print(self, arg, tracer):
         """
@@ -896,7 +897,7 @@ class TerminalCommandManager(CommandManager):
         Print the following expression
         """
         tracer.eval_(arg)
-        self.next_command(tracer)
+        return self.next_command.tailcall(tracer)
     do_p = do_print
 
     def do_step(self, arg, tracer):
@@ -954,7 +955,7 @@ class TerminalCommandManager(CommandManager):
         if not arg:
             return self.missing_argument('w(atch)')
         tracer.extend_watchlist((arg,))
-        return self.next_command(tracer)
+        return self.next_command.tailcall(tracer)
     do_w = do_watch
 
     def do_unwatch(self, arg, tracer):
@@ -966,7 +967,7 @@ class TerminalCommandManager(CommandManager):
         if not arg:
             return self.missing_argument('unw(atch)')
         tracer.watchlist.pop(arg, None)
-        return self.next_command(tracer)
+        return self.next_command.tailcall(tracer)
     do_unw = do_unwatch
 
     def do_break(self, arg, tracer, temp=False):
@@ -981,7 +982,7 @@ class TerminalCommandManager(CommandManager):
         break_arg = self.parse_break_arg(arg, temp)
         if break_arg:
             tracer.set_break(**break_arg)
-        return self.next_command(tracer)
+        return self.next_command.tailcall(tracer)
     do_b = do_break
 
     def do_clear(self, arg, tracer):
@@ -997,7 +998,7 @@ class TerminalCommandManager(CommandManager):
         break_arg = self.parse_break_arg(arg)
         if break_arg:
             tracer.clear_break(**break_arg)
-        return self.next_command(tracer)
+        return self.next_command.tailcall(tracer)
     do_cl = do_clear
 
     def do_tbreak(self, arg, tracer):
@@ -1045,7 +1046,7 @@ class TerminalCommandManager(CommandManager):
             ),
         )
         if recurse:
-            self.next_command(tracer)
+            return self.next_command.tailcall(tracer)
     do_l = do_list
 
     def do_up(self, arg, tracer):
@@ -1060,7 +1061,7 @@ class TerminalCommandManager(CommandManager):
         else:
             self.do_list(None, tracer, recurse=False)
 
-        return self.next_command(tracer)
+        return self.next_command.tailcall(tracer)
     do_u = do_up
 
     def do_down(self, arg, tracer):
@@ -1075,7 +1076,7 @@ class TerminalCommandManager(CommandManager):
         else:
             self.do_list(None, tracer, recurse=False)
 
-        return self.next_command(tracer)
+        return self.next_command.tailcall(tracer)
     do_d = do_down
 
     def do_locals(self, arg, tracer):
@@ -1088,7 +1089,7 @@ class TerminalCommandManager(CommandManager):
             self.writeln('  %s=%s' % p)
         self.writeln(']')
 
-        return self.next_command(tracer)
+        return self.next_command.tailcall(tracer)
 
     def do_quit(self, arg, tracer):
         """
@@ -1109,4 +1110,4 @@ class TerminalCommandManager(CommandManager):
         self._sticky = not self._sticky
         if self._sticky:
             return self.do_list(None, tracer)
-        return self.next_command(tracer)
+        return self.next_command.tailcall(tracer)
