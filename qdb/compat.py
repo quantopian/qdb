@@ -13,6 +13,8 @@
 # See the License for the specific language governing permissions and
 from __future__ import print_function
 
+from types import MethodType
+
 
 try:
     reduce = reduce
@@ -39,6 +41,7 @@ if PY2:
     from contextlib2 import ExitStack
     import itertools
 
+    boundmethod = MethodType
     filter = itertools.ifilter
     input = raw_input  # NOQA
     items = dict.iteritems
@@ -50,6 +53,9 @@ if PY2:
 else:
     from contextlib import ExitStack
     from io import StringIO
+
+    def boundmethod(f, instance, owner):
+        return MethodType(f, instance)
 
     filter = filter
     input = input  # NOQA

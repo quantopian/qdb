@@ -17,12 +17,11 @@ import re
 import signal as signal_module
 import sys
 import tokenize
-from types import MethodType
 
 from uuid import uuid4
 
 from qdb.errors import QdbError, QdbPrognEndsInStatement
-from qdb.compat import gevent, PY2
+from qdb.compat import gevent, PY2, boundmethod
 
 
 def default_eval_fn(src, stackframe, mode='eval', original=None):
@@ -351,7 +350,7 @@ class tco(object):
         return ret
 
     def __get__(self, instance, owner):
-        return tco(MethodType(self._f, instance, owner))
+        return tco(boundmethod(self._f, instance, owner))
 
     def tailcall(self, *args, **kwargs):
         return _tcreturn(self._f, args, kwargs)
