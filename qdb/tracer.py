@@ -576,7 +576,15 @@ class Qdb(Bdb, object):
         curindex = self.curindex
         skip_fn = self.skip_fn
         target = None
-        while (0 - (direction < 0)) < curindex < (stacksize + (direction < 0)):
+
+        def pred_up(idx):
+            return idx > 0
+
+        def pred_down(idx):
+            return idx < stacksize - 1
+
+        pred = pred_up if direction > 0 else pred_down
+        while pred(curindex):
             curindex += stride
             if not skip_fn(stack[curindex][0].f_code.co_filename):
                 target = curindex
