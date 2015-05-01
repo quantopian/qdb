@@ -13,7 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from abc import ABCMeta, abstractmethod
-from six import with_metaclass
+
+from qdb.compat import with_metaclass
 
 
 class WriteOnlyFileLike(with_metaclass(ABCMeta)):

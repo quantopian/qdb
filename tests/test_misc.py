@@ -18,10 +18,9 @@ import sys
 import time
 from unittest import TestCase
 
-import gevent
-from mock import MagicMock
 from nose_parameterized import parameterized
 
+from qdb.compat import gevent, keys
 from qdb.errors import QdbPrognEndsInStatement
 from qdb.utils import (
     default_eval_fn,
@@ -29,7 +28,10 @@ from qdb.utils import (
     Timeout,
     QdbTimeout,
     progn,
+    tco,
 )
+
+from tests.compat import mock, skip_py3
 
 
 class FakeFrame(object):
@@ -183,34 +185,35 @@ class TimeoutTester(TestCase):
 
         self.assertIs(signal.getsignal(tsignal), existing_handler)
 
+    @skip_py3
     def test_timeout_smart_constructor(self):
         """
         Tests that the smart constructor returns the correct type.
         """
-        green = Timeout(1, green=True)
+        green = Timeout(1)
         self.assertTrue(isinstance(green, gevent.Timeout))
-        not_green = Timeout(1, green=False)
+        not_green = Timeout(1, no_gevent=True)
         self.assertTrue(isinstance(not_green, QdbTimeout))
 
     @parameterized.expand([(False,), (True,)])
-    def test_smart_constructor_can_catch(self, green):
+    def test_smart_constructor_can_catch(self, no_gevent):
         """
         Asserts that users may use the normal try/catch syntax with
         the Timeout smart constructor.
         This test will fail if except Timeout does NOT catch the exception.
         """
         try:
-            raise Timeout(1, green=green)
+            raise Timeout(1, no_gevent=no_gevent)
         except Timeout:
             pass
 
     @parameterized.expand([(False,), (True,)])
-    def test_timout_isinstance(self, green):
+    def test_timout_isinstance(self, no_gevent):
         """
         Asserts that the Timeout smart constructor returns are instances of
         Timeout.
         """
-        self.assertIsInstance(Timeout(1, green=green), Timeout)
+        self.assertIsInstance(Timeout(1, no_gevent=no_gevent), Timeout)
 
 
 class PrognTester(TestCase):
@@ -276,15 +279,15 @@ class PrognTester(TestCase):
 
         # Make sure the register function name didn't persist.
         self.assertEqual(
-            ['__builtins__', 'global_'],
-            stackframe.f_globals.keys()
+            sorted(('__builtins__', 'global_')),
+            sorted(keys(stackframe.f_globals)),
         )
 
     def test_progn_uses_custom_eval_fn(self):
         """
         Assert that the progn function uses custom eval functions properly.
         """
-        eval_fn = MagicMock()
+        eval_fn = mock.MagicMock()
 
         try:
             progn('2 + 2', eval_fn=eval_fn)
@@ -302,3 +305,26 @@ class PrognTester(TestCase):
         self.assertIsInstance(call_args[0], ast.Module)
         self.assertEqual(call_args[1], sys._getframe())
         self.assertEqual(call_args[2], 'exec')
+
+
+class TcoTester(TestCase):
+    def test_tco_too_many_frames(self):
+        frames = sys.getrecursionlimit()
+
+        def f(n):
+            if not n:
+                return None
+            return f(n - 1)
+
+        # Make sure this is actually too many frames.
+        with self.assertRaises(RuntimeError):
+            f(frames)
+
+        @tco
+        def g(n):
+            if not n:
+                return None
+            return g.tailcall(n - 1)
+
+        # Show that the tco version can handle the same number of frames.
+        self.assertIsNone(g(frames))

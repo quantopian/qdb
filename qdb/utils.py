@@ -18,10 +18,10 @@ import signal as signal_module
 import sys
 import tokenize
 
-import gevent
 from uuid import uuid4
 
 from qdb.errors import QdbError, QdbPrognEndsInStatement
+from qdb.compat import gevent, PY2, boundmethod
 
 
 def default_eval_fn(src, stackframe, mode='eval', original=None):
@@ -60,12 +60,15 @@ class QdbTimeout(QdbError):
             if t is u:
                 cleanup()
     """
-    def __init__(self, seconds, exception=None):
+    def __init__(self, seconds, exception=None, no_gevent=True):
         """
         seconds is the number of seconds to run this Timeout for.
         exception is the exception to raise in the case of a timeout.
         When exception is ommited or None, the QdbTimeout itself is raised.
         """
+        if isinstance(seconds, float):
+            seconds = int(seconds + 1)
+
         if not isinstance(seconds, int):
             raise ValueError('integer argument expected, got %s'
                              % type(seconds).__name__)
@@ -74,13 +77,21 @@ class QdbTimeout(QdbError):
         self._existing_handler = None
         self.seconds = seconds
         self._running = False
-        self._greenlet = gevent.getcurrent()
+
+        if gevent is not None:
+            self._greenlet = gevent.getcurrent()
+        else:
+            self._greenlet = None
 
     def _signal_handler(self, signum, stackframe):
         if self._running:
             # Restore the orignal handler in case it times out.
             signal_module.signal(signal_module.SIGALRM, self._existing_handler)
-            self._greenlet.throw(self._exception or self)
+            exc = self._exception or self
+            if gevent is None:
+                raise exc
+            else:
+                self._greenlet.throw(exc)
 
     def start(self):
         """
@@ -123,49 +134,52 @@ class QdbTimeout(QdbError):
 
     def __repr__(self):
         return 'QdbTimeout(seconds=%s, exception=%s, timer_signal=%s)' \
-            % (self.seconds, self.exception, signal_module.SIGALRM)
+            % (self.seconds, self._exception, signal_module.SIGALRM)
 
 
-class _TimeoutMagic(tuple):
-    """
-    _TimeoutMagic is really just a tuple that can be called to get a new
-    Timeout that is either gevented or not.
-    """
-    def __call__(self, seconds, exception=None, green=False):
+if gevent is not None:
+    class _TimeoutMagic(tuple):
         """
-        A timeout smart constructor that returns a gevent.Timeout or a
-        QdbTimeout.
+        _TimeoutMagic is really just a tuple that can be called to
+        get a new Timeout that is either gevented or not.
         """
-        if green:
-            timeout = gevent.Timeout
-        else:
-            timeout = QdbTimeout
+        def __call__(self, seconds, exception=None, no_gevent=False):
+            """
+            A timeout smart constructor that returns a
+            gevent.Timeout or a QdbTimeout.
+            """
+            if gevent is None or no_gevent:
+                timeout = QdbTimeout
+            else:
+                timeout = gevent.Timeout
 
-        return timeout(seconds, exception)
+            return timeout(seconds, exception)
 
-
-# The way this works is that in an except block, if you pass a tuple of
-# exceptions, it will compare the exception to each of the exceptions in the
-# tuple. Therefore, if you write:
-#
-# except Timeout:
-#
-# You can think of it as expanding to:
-#
-# except (gevent.Timeout, QdbTimeout):
-#
-# Also, because the __call__ has been overridden, you can get the proper
-# timeout by calling:
-#
-# Timeout(seconds, green=is_green)
-#
-# Timeout is capitalized because in almost all use cases you can think of
-# this as a class, even though there is a little more going on.
-Timeout = _TimeoutMagic([gevent.Timeout, QdbTimeout])
+    # The way this works is that in an except block, if you pass a
+    # tuple of exceptions, it will compare the exception to each of
+    # the exceptions in the tuple. Therefore, if you write:
+    #
+    # except Timeout:
+    #
+    # You can think of it as expanding to:
+    #
+    # except (gevent.Timeout, QdbTimeout):
+    #
+    # Also, because the __call__ has been overridden, you can get
+    # the proper timeout by calling:
+    #
+    # Timeout(seconds)
+    #
+    # Timeout is capitalized because in almost all use cases you
+    # can think of this as a class, even though there is a little
+    # more going on.
+    Timeout = _TimeoutMagic((gevent.Timeout, QdbTimeout))
+else:
+    Timeout = QdbTimeout
 
 
 # Don't register the results from these nodes.
-NO_REGISTER_STATEMENTS = {
+NO_REGISTER_STATEMENTS = frozenset((
     # Classes and functions.
     ast.FunctionDef,
     ast.ClassDef,
@@ -176,8 +190,6 @@ NO_REGISTER_STATEMENTS = {
     ast.Assign,
     ast.AugAssign,
 
-    ast.Print,
-
     # Imports
     ast.Import,
     ast.ImportFrom,
@@ -186,7 +198,10 @@ NO_REGISTER_STATEMENTS = {
 
     ast.Global,
     ast.Pass,
-}
+))
+
+if PY2:
+    NO_REGISTER_STATEMENTS |= {ast.Print, ast.Repr}
 
 
 # Matches valid python names.
@@ -305,3 +320,47 @@ def progn(src, eval_fn=None, stackframe=None):
     except KeyError:
         # There was no final expression.
         raise QdbPrognEndsInStatement(src)
+
+
+class tco(object):
+    """
+    Emulates explicit tail call optmization.
+
+    example:
+
+      @tco
+      def prod(ns, a=1):
+          n = ns[0]
+          if n == 0:
+              return 0
+          if not ns:
+              return a
+          return prod.tailcall(ns[1:], n * a)
+
+    """
+    def __init__(self, f):
+        self._f = f
+        self.__name__ = f.__name__
+
+    def __call__(self, *args, **kwargs):
+        f = self._f
+        ret = f(*args, **kwargs)
+        while type(ret) is _tcreturn:
+            ret = ret()
+        return ret
+
+    def __get__(self, instance, owner):
+        return tco(boundmethod(self._f, instance, owner))
+
+    def tailcall(self, *args, **kwargs):
+        return _tcreturn(self._f, args, kwargs)
+
+
+class _tcreturn(object):
+    def __init__(self, f, args, kwargs):
+        self._f = f
+        self._args = args
+        self._kwargs = kwargs
+
+    def __call__(self):
+        return self._f(*self._args, **self._kwargs)

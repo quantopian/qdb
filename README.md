@@ -1,4 +1,5 @@
 # qdb #
+[![build status](https://travis-ci.org/quantopian/qdb.png?branch=master)](https://travis-ci.org/quantopian/qdb)
 [![Gitter](https://badges.gitter.im/Join Chat.svg)](https://gitter.im/quantopian/qdb?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
 
 
@@ -22,8 +23,8 @@ of application. qdb provides a terminal client and emacs mode for this.
 
 
 The tracer is the main debugging process. This is the actual code that the user
-wishes to debug. Communication here is through a socket sending pickle'd
-dictionaries representing only the valid messages sent to the server from
+wishes to debug. Communication here is through a socket sending json
+objects representing only the valid messages sent to the server from
 the client. A single tracer may have multiple clients connected to it.
 
 

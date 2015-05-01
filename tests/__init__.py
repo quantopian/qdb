@@ -12,8 +12,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from gevent.monkey import patch_all
-patch_all()  # Patch out the modules before executing the tests.
+from qdb.compat import gevent
+if gevent is not None:
+    from gevent.monkey import patch_all
+    patch_all()  # Patch out the modules before executing the tests.
 
 import os
 

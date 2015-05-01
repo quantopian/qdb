@@ -12,23 +12,22 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import print_function
+
 import sys
 from unittest import TestCase
 
-from gevent import Timeout
-from mock import patch
-
-try:
-    from cStringIO import StringIO
-except ImportError:
-    from StringIO import StringIO
-
 from qdb import Qdb
 from qdb.comm import NopCommandManager
+from qdb.compat import StringIO
 from qdb.errors import QdbExecutionTimeout
+from qdb.utils import Timeout
 
 from tests import fix_filename
 from tests.utils import QueueCommandManager, OutputCatchingNopCommandManager
+from tests.compat import mock, NonLocal, skip_py3
+
+patch = mock.patch
 
 
 def global_fn():
@@ -69,9 +68,9 @@ class TracerTester(TestCase):
         cmd_stop = None
         with patch.object(NopCommandManager, 'start') as cmd_start, \
                 patch.object(NopCommandManager, 'stop') as cmd_stop, \
-                Qdb(cmd_manager=NopCommandManager) as db:
+                Qdb(cmd_manager=NopCommandManager()) as db:
             db.set_trace()
-            cmd_start.assert_called_once_with('')
+            cmd_start.assert_called_once_with(db, '')
             line_1 = True
             self.assertTrue(line_1)
             self.assertIs(Qdb._instance, db)
@@ -92,8 +91,8 @@ class TracerTester(TestCase):
         Tests that two newly created Qdb objects are the same.
         """
         self.assertIs(
-            Qdb(cmd_manager=NopCommandManager),
-            Qdb(cmd_manager=NopCommandManager)
+            Qdb(cmd_manager=NopCommandManager()),
+            Qdb(cmd_manager=NopCommandManager())
         )
 
     def test_set_step(self):
@@ -101,10 +100,11 @@ class TracerTester(TestCase):
         Tests the functionality of set_step by asserting that it only executes
         the next line and no more.
         """
-        db = Qdb(cmd_manager=QueueCommandManager)
+        cmd_manager = QueueCommandManager()
+        db = Qdb(cmd_manager=cmd_manager)
 
         # Queue up a step command.
-        db.cmd_manager.enqueue(lambda t: t.set_step())
+        cmd_manager.enqueue(lambda t: t.set_step())
 
         stepped = False
         with Timeout(0.1, False):
@@ -115,10 +115,11 @@ class TracerTester(TestCase):
 
         db.disable()
 
-        db = Qdb(cmd_manager=QueueCommandManager)
+        cmd_manager = QueueCommandManager()
+        db = Qdb(cmd_manager=cmd_manager)
 
-        db.cmd_manager.enqueue(lambda t: t.set_step())
-        db.cmd_manager.user_wait(0.2)
+        cmd_manager.enqueue(lambda t: t.set_step())
+        cmd_manager.user_wait(0.2)
 
         stepped = over_stepped = False
         with Timeout(0.1, False):
@@ -135,27 +136,28 @@ class TracerTester(TestCase):
         This checks to make sure the function is stepped into and can be
         stepped over.
         """
-        db = Qdb(cmd_manager=QueueCommandManager)
+        cmd_manager = QueueCommandManager()
+        db = Qdb(cmd_manager=cmd_manager)
 
         # Queue up a next command to next over the function call.
-        db.cmd_manager.enqueue(lambda t: t.set_next(t.curframe))
+        cmd_manager.enqueue(lambda t: t.set_next(t.curframe))
         # Queue up a sleep so that we block after calling next.
         # This would cause us to NOT execute the f_called[0] = True line of f
         # had we only called set_step. This is asserted afterwards.
-        db.cmd_manager.user_wait(0.2)
+        cmd_manager.user_wait(0.2)
 
         # A mutable structure to check if f is called.
-        f_called = [False]
+        f_called = NonLocal(False)
 
         def f():
-            f_called[0] = True
+            f_called.value = True
 
         with Timeout(0.1, False):
             db.set_trace()
             f()
 
         # We hit that line in f, so it should now be True.
-        self.assertTrue(f_called[0])
+        self.assertTrue(f_called.value)
 
         # Assert that we are currently executing the line we think we should
         # be executing. Since we are just stepping, this should be setting
@@ -166,35 +168,37 @@ class TracerTester(TestCase):
         )
 
         db.disable()
-        db = Qdb(cmd_manager=QueueCommandManager)
+        cmd_manager = QueueCommandManager()
+        db = Qdb(cmd_manager=cmd_manager)
 
-        f_called[0] = False
+        f_called = NonLocal(False)
 
         # This time we will be only stepping, so we should not execute the
         # entire call to f.
-        db.cmd_manager.enqueue(lambda t: t.set_step())
-        db.cmd_manager.user_wait(0.2)
+        cmd_manager.enqueue(lambda t: t.set_step())
+        cmd_manager.user_wait(1.2)
 
         with Timeout(0.1, False):
             db.set_trace()
             f()
 
         # We should not have hit this line in f.
-        self.assertFalse(f_called[0])
+        self.assertFalse(f_called.value)
         # Since we only stepped once, this is the last time we set the frame.
         self.assertEqual(
             db.get_line(self.filename, db.curframe.f_lineno),
-            '            f_called[0] = True'
+            '            f_called.value = True'
         )
 
     def test_set_continue_no_breaks(self):
         """
         Asserts that set_continue works with no breakpoints.
         """
-        db = Qdb(cmd_manager=QueueCommandManager)
+        cmd_manager = QueueCommandManager()
+        db = Qdb(cmd_manager=cmd_manager)
 
-        db.cmd_manager.enqueue(lambda t: t.set_continue())
-        db.cmd_manager.user_wait(0.2)
+        cmd_manager.enqueue(lambda t: t.set_continue())
+        cmd_manager.user_wait(0.2)
 
         line_1 = line_2 = line_3 = False
         with Timeout(0.1, False):
@@ -218,14 +222,15 @@ class TracerTester(TestCase):
         Tests the behavior of continue when there are breakpoints in the mix.
         WARNING: This test relies on the relative line numbers inside the test.
         """
-        db = Qdb(cmd_manager=QueueCommandManager)
+        cmd_manager = QueueCommandManager()
+        db = Qdb(cmd_manager=cmd_manager)
         line_offset = 8  # The difference in the set_break call and line_2.
         db.set_break(
             self.filename,
             sys._getframe().f_lineno + line_offset,
         )
-        db.cmd_manager.enqueue(lambda t: t.set_continue())
-        db.cmd_manager.user_wait(0.2)
+        cmd_manager.enqueue(lambda t: t.set_continue())
+        cmd_manager.user_wait(0.2)
         line_1 = line_2 = line_3 = False
         with Timeout(0.1, False):
             db.set_trace()
@@ -247,7 +252,8 @@ class TracerTester(TestCase):
 
         sys.settrace(None)
         db.disable()
-        db = Qdb(cmd_manager=QueueCommandManager)
+        cmd_manager = QueueCommandManager()
+        db = Qdb(cmd_manager=cmd_manager)
         line_2_offset = 13  # The difference in the set_break call and line_2.
         line_3_offset = 10   # THe difference in the set_break call and line_3.
         db.set_break(
@@ -258,9 +264,9 @@ class TracerTester(TestCase):
             self.filename,
             sys._getframe().f_lineno + line_3_offset,
         )
-        db.cmd_manager.enqueue(lambda t: t.set_continue())
-        db.cmd_manager.enqueue(lambda t: t.set_continue())
-        db.cmd_manager.user_wait(0.2)
+        cmd_manager.enqueue(lambda t: t.set_continue())
+        cmd_manager.enqueue(lambda t: t.set_continue())
+        cmd_manager.user_wait(0.2)
         line_1 = line_2 = line_3 = False
         with Timeout(0.1, False):
             db.set_trace()
@@ -281,8 +287,9 @@ class TracerTester(TestCase):
         """
         Asserts that calling set_trace will put us into stepping mode.
         """
-        db = Qdb(cmd_manager=QueueCommandManager)
-        db.cmd_manager.user_wait(0.2)
+        cmd_manager = QueueCommandManager()
+        db = Qdb(cmd_manager=cmd_manager)
+        cmd_manager.user_wait(0.2)
         line_1 = False
         with Timeout(0.1, False):
             db.set_trace()
@@ -297,13 +304,14 @@ class TracerTester(TestCase):
         but not stop.
         WARNING: This test relies on the relative line numbers inside the test.
         """
-        db = Qdb(cmd_manager=QueueCommandManager)
+        cmd_manager = QueueCommandManager()
+        db = Qdb(cmd_manager=cmd_manager)
         line_offset = 8  # The difference in the set_break call and line_3.
         db.set_break(
             self.filename,
             sys._getframe().f_lineno + line_offset,
         )
-        db.cmd_manager.user_wait(0.2)
+        cmd_manager.user_wait(0.2)
         line_1 = line_2 = line_3 = False
         with Timeout(0.1, False):
             db.set_trace(stop=False)  # Should not stop us here.
@@ -319,7 +327,7 @@ class TracerTester(TestCase):
 
         db.disable()
 
-        db = Qdb(cmd_manager=NopCommandManager)
+        db = Qdb(cmd_manager=NopCommandManager())
         line_1 = False
         with Timeout(0.1, False):
             db.set_trace(stop=False)
@@ -327,12 +335,13 @@ class TracerTester(TestCase):
 
         self.assertTrue(line_1)
 
+    @skip_py3
     def test_watchlist(self):
         """
         Tests the watchlist by evaluating a constant, local function, local
         variable, global function, and global variable.
         """
-        db = Qdb(cmd_manager=NopCommandManager, execution_timeout=1)
+        db = Qdb(cmd_manager=NopCommandManager(), execution_timeout=1)
 
         too_long_msg = db.exception_serializer(
             QdbExecutionTimeout('too_long()', 1)
@@ -401,9 +410,10 @@ class TracerTester(TestCase):
         Tests valid conditional breakpoints.
         WARNING: This test relies on the relative line numbers inside the test.
         """
-        db = Qdb(cmd_manager=QueueCommandManager)
+        cmd_manager = QueueCommandManager()
+        db = Qdb(cmd_manager=cmd_manager)
         loop_counter = 0
-        db.cmd_manager.enqueue(lambda t: self.assertEqual(loop_counter, 5))
+        cmd_manager.enqueue(lambda t: self.assertEqual(loop_counter, 5))
         line_offset = 5
         db.set_break(
             self.filename,
@@ -429,8 +439,9 @@ class TracerTester(TestCase):
             stopped[0] = True
             return True  # Execute the assertion.
 
-        db = Qdb(cmd_manager=QueueCommandManager)
-        db.cmd_manager.enqueue(lambda t: stop() and self.assertEqual(line, 1))
+        cmd_manager = QueueCommandManager()
+        db = Qdb(cmd_manager=cmd_manager)
+        cmd_manager.enqueue(lambda t: stop() and self.assertEqual(line, 1))
         line_offset = 9
         # Set a condition that will raise a ValueError.
         db.set_break(
@@ -448,7 +459,7 @@ class TracerTester(TestCase):
         line = 3
 
         db.disable()
-        errors = [e['p'] for e in db.cmd_manager.sent if e['e'] == 'error']
+        errors = [e['p'] for e in cmd_manager.sent if e['e'] == 'error']
         self.assertEqual(len(errors), 1)
 
         error = errors[0]
@@ -480,8 +491,9 @@ class TracerTester(TestCase):
         line = None
         cond = 'g()'
 
-        db = Qdb(cmd_manager=QueueCommandManager, execution_timeout=1)
-        db.cmd_manager.enqueue(lambda t: stop() and self.assertEqual(line, 1))
+        cmd_manager = QueueCommandManager()
+        db = Qdb(cmd_manager=cmd_manager, execution_timeout=1)
+        cmd_manager.enqueue(lambda t: stop() and self.assertEqual(line, 1))
         line_offset = 10
         # Set a condition that will time out.
         db.set_break(
@@ -500,7 +512,7 @@ class TracerTester(TestCase):
         line = 3
 
         db.disable()
-        errors = [e['p'] for e in db.cmd_manager.sent if e['e'] == 'error']
+        errors = [e['p'] for e in cmd_manager.sent if e['e'] == 'error']
         self.assertEqual(len(errors), 1)
 
         error = errors[0]
@@ -524,9 +536,10 @@ class TracerTester(TestCase):
         Tests conditional breakpoints.
         WARNING: This test relies on the relative line numbers inside the test.
         """
-        db = Qdb(cmd_manager=QueueCommandManager)
-        db.cmd_manager.enqueue(lambda t: t.set_continue())
-        db.cmd_manager.user_wait(0.2)
+        cmd_manager = QueueCommandManager()
+        db = Qdb(cmd_manager=cmd_manager)
+        cmd_manager.enqueue(lambda t: t.set_continue())
+        cmd_manager.user_wait(0.2)
         loop_counter = 0
         line_offset = 6
         db.set_break(
@@ -548,15 +561,16 @@ class TracerTester(TestCase):
         Tests clearing a breakpoint.
         WARNING: This test relies on the relative line numbers inside the test.
         """
-        db = Qdb(cmd_manager=QueueCommandManager)
+        cmd_manager = QueueCommandManager()
+        db = Qdb(cmd_manager=cmd_manager)
         clear_break_offset = 14
         set_break_offset = 8
-        db.cmd_manager.enqueue(lambda t: t.clear_break(
+        cmd_manager.enqueue(lambda t: t.clear_break(
             self.filename,
             sys._getframe().f_lineno + clear_break_offset
         ))
-        db.cmd_manager.enqueue(lambda t: t.set_continue())
-        db.cmd_manager.user_wait(0.2)
+        cmd_manager.enqueue(lambda t: t.set_continue())
+        cmd_manager.user_wait(0.2)
         db.set_break(
             self.filename,
             sys._getframe().f_lineno + set_break_offset
@@ -566,7 +580,7 @@ class TracerTester(TestCase):
         continued = False
         with Timeout(0.1):
             db.set_trace(stop=False)
-            for n in xrange(2):
+            for n in range(2):
                 pass
             continued = True
 
@@ -577,15 +591,17 @@ class TracerTester(TestCase):
         Tests that stdout is stored on the tracer.
         """
         sys.stdout = stdout = StringIO()
-        db = Qdb(cmd_manager=OutputCatchingNopCommandManager)
+        cmd_manager = OutputCatchingNopCommandManager()
+        db = Qdb(cmd_manager=cmd_manager)
 
         data_to_write = 'stdout'
         db.set_trace(stop=False)
 
-        print data_to_write,  # Write some data to stdout.
+        # Write some data to stdout.
+        print(data_to_write, end='')
 
         db.disable()
-        msg = db.cmd_manager.msgs[0]
+        msg = cmd_manager.msgs[0]
         self.assertEqual(msg.input_, '<stdout>')
         self.assertFalse(msg.exc)
         self.assertEqual(msg.output, data_to_write)
@@ -599,16 +615,18 @@ class TracerTester(TestCase):
         Tests that stderr is stored on the tracer.
         """
         sys.stderr = stderr = StringIO()
-        db = Qdb(cmd_manager=OutputCatchingNopCommandManager)
+        cmd_manager = OutputCatchingNopCommandManager()
+        db = Qdb(cmd_manager=cmd_manager)
 
         data_to_write = 'stderr'
         db.set_trace(stop=False)
 
-        print >> sys.stderr, data_to_write,  # Write some data to stderr.
+        # Write some data to stderr.
+        print(data_to_write, end='', file=sys.stderr)
 
         db.disable()
 
-        msg = db.cmd_manager.msgs[0]
+        msg = cmd_manager.msgs[0]
         self.assertEqual(msg.input_, '<stderr>')
         self.assertFalse(msg.exc)
         self.assertEqual(msg.output, data_to_write)
@@ -624,7 +642,7 @@ class TracerTester(TestCase):
         ns = {'a': 1, 'b': 2}
 
         # rip pyflakes
-        with Qdb(cmd_manager=NopCommandManager, default_namespace=ns) as db, \
+        with Qdb(cmd_manager=NopCommandManager(), default_namespace=ns) as db,\
                 db.inject_default_namespace(sys._getframe()):
             self.assertEqual(a, 1)  # NOQA
             self.assertEqual(b, 2)  # NOQA
@@ -643,7 +661,7 @@ class TracerTester(TestCase):
         ns = {'a': 1, 'b': 2}
 
         # rip pyflakes
-        with Qdb(cmd_manager=NopCommandManager, default_namespace=ns) as db:
+        with Qdb(cmd_manager=NopCommandManager(), default_namespace=ns) as db:
             db.curframe = sys._getframe()
             with db.inject_default_namespace():
                 self.assertEqual(a, 1)  # NOQA
@@ -661,7 +679,7 @@ class TracerTester(TestCase):
         """
         ns = {'a': 1, 'b': 2}
 
-        with Qdb(cmd_manager=NopCommandManager, default_namespace=ns) as db, \
+        with Qdb(cmd_manager=NopCommandManager(), default_namespace=ns) as db,\
                 db.inject_default_namespace(sys._getframe()):
             a = 'a'
             b = 'b'

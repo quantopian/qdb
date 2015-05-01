@@ -16,22 +16,32 @@ from functools import partial
 from pprint import pformat
 import signal
 import sys
+from time import sleep
 from unittest import TestCase
 
-from gevent import Timeout, sleep
-from mock import MagicMock, patch
 from nose_parameterized import parameterized
 
 from qdb import Qdb
 from qdb.comm import RemoteCommandManager, ServerLocalCommandManager, fmt_msg
+from qdb.compat import with_metaclass, PY2, gevent
 from qdb.errors import (
     QdbFailedToConnect,
     QdbAuthenticationError,
     QdbExecutionTimeout,
 )
-from qdb.server import QdbServer
 
 from tests import fix_filename
+from tests.compat import mock, skip_py3, NonLocal, Py2TestMeta
+
+
+if PY2:
+    from qdb.server import QdbServer
+
+patch = mock.patch
+MagicMock = mock.MagicMock
+
+patch = mock.patch
+MagicMock = mock.MagicMock
 
 
 def set_break_params(tracer, filename, lineno, temporary=False, cond=None,
@@ -49,19 +59,22 @@ def set_break_params(tracer, filename, lineno, temporary=False, cond=None,
     }
 
 
-class RemoteCommandManagerTester(TestCase):
+class RemoteCommandManagerTester(with_metaclass(Py2TestMeta, TestCase)):
     """
     Tests the various behaviors that the RemoteCommandManager should conform
     to. Some tests rely on how the command manager affects the tracer that it
     is managing.
     """
+    @skip_py3
     @classmethod
     def setUpClass(cls):
         """
         Start up a tracer server for the remote command managers to connect to.
         """
         cls.setup_server()
-        cls.cmd_manager = RemoteCommandManager
+
+    def setUp(self):
+        self.cmd_manager = RemoteCommandManager()
 
     @classmethod
     def setup_server(cls):
@@ -106,6 +119,7 @@ class RemoteCommandManagerTester(TestCase):
         tracer.curframe = sys._getframe()
         tracer.stack = [(sys._getframe(), 1)] * 3
         tracer.skip_fn = lambda _: False
+        tracer.cmd_manager = self.cmd_manager
         return tracer
 
     def test_connect(self):
@@ -114,7 +128,7 @@ class RemoteCommandManagerTester(TestCase):
         """
         tracer = self.MockTracer()
         # If we fail to connect, an error is raised and we fail the test.
-        self.cmd_manager(tracer)
+        self.cmd_manager.start(tracer)
 
     def test_fail_to_connect(self):
         """
@@ -123,7 +137,7 @@ class RemoteCommandManagerTester(TestCase):
         tracer = self.MockTracer()
         tracer.address = 'not' + self.tracer_host, self.tracer_port
         with self.assertRaises(QdbFailedToConnect):
-            self.cmd_manager(tracer).start('')
+            self.cmd_manager.start(tracer, '')
 
     def test_fail_auth(self):
         """
@@ -131,9 +145,9 @@ class RemoteCommandManagerTester(TestCase):
         """
         tracer = self.MockTracer()
         with self.assertRaises(QdbAuthenticationError):
-            cmd_manager = self.cmd_manager(tracer)
-            cmd_manager.start(self.bad_auth_msg)
-            cmd_manager.next_command()
+            cmd_manager = self.cmd_manager
+            cmd_manager.start(tracer, self.bad_auth_msg)
+            cmd_manager.next_command(tracer)
 
     @parameterized.expand([
         ({'file': 'test.py', 'line': 2},),
@@ -145,10 +159,10 @@ class RemoteCommandManagerTester(TestCase):
     def test_fmt_breakpoint_dict(self, arg_dict):
         tracer = self.MockTracer()
         tracer.default_file = 'd.py'
-        cmd_manager = self.cmd_manager(tracer)
+        cmd_manager = self.cmd_manager
         cpy = dict(arg_dict)
         self.assertEqual(
-            cmd_manager.fmt_breakpoint_dict(cpy),
+            cmd_manager.fmt_breakpoint_dict(tracer, cpy),
             set_break_params(tracer, **cpy)
         )
 
@@ -177,15 +191,14 @@ class RemoteCommandManagerTester(TestCase):
         Tests various commands with or without payloads.
         """
         tracer = self.MockTracer()
-        cmd_manager = self.cmd_manager(tracer)
-        tracer.cmd_manager = cmd_manager
-        cmd_manager.start('')
+        cmd_manager = self.cmd_manager
+        cmd_manager.start(tracer, '')
         self.server.session_store.send_to_tracer(
             uuid=tracer.uuid,
             event=fmt_msg(event, payload)
         )
-        with Timeout(0.1, False):
-            cmd_manager.next_command()
+        with gevent.Timeout(0.1, False):
+            cmd_manager.next_command(tracer)
         tracer.start.assert_called()  # Start always gets called.
         attrgetter_(tracer).assert_called()
         # Kill the session we just created
@@ -195,27 +208,27 @@ class RemoteCommandManagerTester(TestCase):
         """
         Tests accessing the locals.
         """
-        command_locals_called = [False]
-
-        def test_command_locals(cmd_manager, payload):
-            command_locals_called[0] = True
-            self.cmd_manager.command_locals(cmd_manager, payload)
-
         tracer = self.MockTracer()
         tracer.curframe_locals = {'a': 'a'}
-        cmd_manager = self.cmd_manager(tracer)
-        cmd_manager.command_locals = partial(test_command_locals, cmd_manager)
-        tracer.cmd_manager = cmd_manager
-        cmd_manager.start('')
+        cmd_manager = self.cmd_manager
+        cmd_manager.start(tracer, '')
         sleep(0.01)
         self.server.session_store.send_to_tracer(
             uuid=tracer.uuid,
             event=fmt_msg('locals')
         )
 
-        with Timeout(0.1, False):
-            cmd_manager.next_command()
-        self.assertTrue(command_locals_called[0])
+        command_locals_called = NonLocal(False)
+
+        def test_command_locals(cmd_manager, tracer, payload):
+            command_locals_called.value = True
+            type(self.cmd_manager).command_locals(cmd_manager, tracer, payload)
+
+        cmd_locals = partial(test_command_locals, cmd_manager)
+        with gevent.Timeout(0.1, False), \
+                patch.object(cmd_manager, 'command_locals', cmd_locals):
+            cmd_manager.next_command(tracer)
+        self.assertTrue(command_locals_called.value)
 
         tracer.start.assert_called()  # Start always gets called.
         self.server.session_store.slaughter(tracer.uuid)
@@ -230,21 +243,22 @@ class RemoteCommandManagerTester(TestCase):
         def capture_event(self, event, payload):
             events.append(fmt_msg(event, payload))
 
-        class cmd_manager(self.cmd_manager):
+        class cmd_manager(type(self.cmd_manager)):
             """
             Wrap send_stack by just capturing the output to make assertions on
             it.
             """
-            def send_stack(self):
+            def send_stack(self, tracer):
                 with patch.object(cmd_manager, 'send_event', capture_event):
-                    super(cmd_manager, self).send_stack()
+                    super(cmd_manager, self).send_stack(tracer)
 
         db = Qdb(
             uuid='test_' + direction,
-            cmd_manager=cmd_manager,
+            cmd_manager=cmd_manager(),
             host=self.tracer_host,
             port=self.tracer_port,
             redirect_output=False,
+            green=True,
         )
         sleep(0.01)
         if direction == 'down':
@@ -293,6 +307,7 @@ class RemoteCommandManagerTester(TestCase):
             cmd_manager=self.cmd_manager,
             host=self.tracer_host,
             port=self.tracer_port,
+            green=True,
         )
         signal.signal(db.pause_signal, pause_handler)
         self.server.session_store.send_to_tracer(
@@ -316,7 +331,7 @@ class RemoteCommandManagerTester(TestCase):
         """
         prints = []
 
-        class cmd_manager(self.cmd_manager):
+        class cmd_manager(type(self.cmd_manager)):
             """
             Captures print commands to make assertions on them.
             """
@@ -329,10 +344,11 @@ class RemoteCommandManagerTester(TestCase):
 
         db = Qdb(
             uuid='eval_test',
-            cmd_manager=cmd_manager,
+            cmd_manager=cmd_manager(),
             host=self.tracer_host,
             port=self.tracer_port,
             redirect_output=False,
+            green=True,
         )
         sleep(0.01)
         self.server.session_store.send_to_tracer(
@@ -369,7 +385,7 @@ class RemoteCommandManagerTester(TestCase):
         """
         prints = []
 
-        class cmd_manager(self.cmd_manager):
+        class cmd_manager(type(self.cmd_manager)):
             """
             Captures print commands to make assertions on them.
             """
@@ -382,7 +398,7 @@ class RemoteCommandManagerTester(TestCase):
 
         db = Qdb(
             uuid='eval_test',
-            cmd_manager=cmd_manager,
+            cmd_manager=cmd_manager(),
             host=self.tracer_host,
             port=self.tracer_port,
             redirect_output=False,
@@ -419,6 +435,7 @@ class RemoteCommandManagerTester(TestCase):
             host=self.tracer_host,
             port=self.tracer_port,
             redirect_output=False,
+            green=True,
         )
         sleep(0.01)
         self.server.session_store.send_to_tracer(
@@ -444,7 +461,7 @@ class RemoteCommandManagerTester(TestCase):
 
         prints = []
 
-        class cmd_manager(self.cmd_manager):
+        class cmd_manager(type(self.cmd_manager)):
             """
             Captures print commands to make assertions on them.
             """
@@ -459,11 +476,12 @@ class RemoteCommandManagerTester(TestCase):
 
         db = Qdb(
             uuid='timeout_test',
-            cmd_manager=cmd_manager,
+            cmd_manager=cmd_manager(),
             host=self.tracer_host,
             port=self.tracer_port,
             redirect_output=False,
             execution_timeout=1,
+            green=True,
         )
         sleep(0.01)
         self.server.session_store.send_to_tracer(
@@ -491,7 +509,7 @@ class RemoteCommandManagerTester(TestCase):
         """
         Tests that disabling sends a 'disabled' message back to the server.
         """
-        class cmd_manager(self.cmd_manager):
+        class cmd_manager(type(self.cmd_manager)):
             disabled = False
 
             def send_disabled(self):
@@ -499,10 +517,11 @@ class RemoteCommandManagerTester(TestCase):
 
         db = Qdb(
             uuid='send_disabled_test',
-            cmd_manager=cmd_manager,
+            cmd_manager=cmd_manager(),
             host=self.tracer_host,
             port=self.tracer_port,
             redirect_output=False,
+            green=True,
         )
         sleep(0.01)
         db.set_trace(stop=False)
@@ -526,22 +545,23 @@ class RemoteCommandManagerTester(TestCase):
         def capture_event(self, event, payload):
             events.append(fmt_msg(event, payload))
 
-        class cmd_manager(self.cmd_manager):
+        class cmd_manager(type(self.cmd_manager)):
             """
             Wrap send_stack by just capturing the output to make assertions on
             it.
             """
-            def send_stack(self):
+            def send_stack(self, tracer):
                 with patch.object(cmd_manager, 'send_event', capture_event):
-                    super(cmd_manager, self).send_stack()
+                    super(cmd_manager, self).send_stack(tracer)
 
         db = Qdb(
             uuid='send_stack_test',
-            cmd_manager=cmd_manager,
+            cmd_manager=cmd_manager(),
             host=self.tracer_host,
             port=self.tracer_port,
             redirect_output=False,
             skip_fn=skip_fn if use_skip_fn else None,
+            green=True,
         )
         sleep(0.01)
         self.server.session_store.send_to_tracer(
@@ -564,6 +584,28 @@ class RemoteCommandManagerTester(TestCase):
 
         self.server.session_store.slaughter(db.uuid)
 
+    def test_why_are_you_executing_all_these_commands(self):
+        db = Qdb(
+            uuid='send_stack_test',
+            cmd_manager=self.cmd_manager,
+            host=self.tracer_host,
+            port=self.tracer_port,
+            redirect_output=False,
+            green=True,
+        )
+        sleep(0.01)
+        for n in range(sys.getrecursionlimit()):
+            self.server.session_store.send_to_tracer(
+                uuid=db.uuid,
+                event=fmt_msg('eval', 'None')
+            )
+        self.server.session_store.send_to_tracer(
+            uuid=db.uuid,
+            event=fmt_msg('continue')
+        )
+        with gevent.Timeout(1):
+            db.set_trace(stop=True)
+
 
 class ServerLocalCommandManagerTester(RemoteCommandManagerTester):
     """
@@ -571,7 +613,5 @@ class ServerLocalCommandManagerTester(RemoteCommandManagerTester):
     the ServerLocalCommandManager. This makes sure that the same behavior holds
     for the two types of command managers.
     """
-    @classmethod
-    def setUpClass(cls):
-        cls.setup_server()
-        cls.cmd_manager = ServerLocalCommandManager
+    def setUp(self):
+        self.cmd_manager = ServerLocalCommandManager()

@@ -13,28 +13,70 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from bdb import Bdb, Breakpoint, checkfuncname, BdbQuit
+from contextlib import contextmanager
+from functools import partial
+import json
+from pprint import pformat
 import signal
 import sys
 import traceback
 from uuid import uuid4
 
-from contextlib2 import ExitStack, contextmanager
-
-try:
-    import cPickle as pickle
-except ImportError:
-    import pickle
-
 from logbook import Logger, FileHandler
 
-from qdb.comm import RemoteCommandManager, fmt_msg
+from qdb.comm import TerminalCommandManager, fmt_msg
+from qdb.compat import items, ExitStack, StringIO
 from qdb.config import QdbConfig
-from qdb.errors import QdbUnreachableBreakpoint, QdbQuit, QdbExecutionTimeout
+from qdb.errors import (
+    QdbUnreachableBreakpoint,
+    QdbQuit,
+    QdbExecutionTimeout,
+    QdbPrognEndsInStatement,
+)
 from qdb.output import RemoteOutput, OutputTee
-from qdb.utils import Timeout, default_eval_fn, default_exception_serializer
+from qdb.utils import (
+    Timeout,
+    default_eval_fn,
+    default_exception_serializer,
+    progn,
+)
 
 
 log = Logger('Qdb')
+
+
+class BoundCmdManager(object):
+    """
+    Binds the tracer to the first argument of all the methods of the
+    command manager.
+    """
+    def __init__(self, tracer, cmd_manager):
+        self._tracer = tracer
+        self._cmd_manager = cmd_manager
+
+    def __getattr__(self, name):
+        return partial(getattr(self._cmd_manager, name), self._tracer)
+
+
+@contextmanager
+def capture_output():
+    """
+    Captures stdout and stderr for the duration of the body.
+    example
+    with capture_output() as (out, err):
+        print 'hello'
+    """
+    old_stdout = sys.stdout
+    old_stderr = sys.stderr
+    sys.stdout = StringIO()
+    sys.stderr = StringIO()
+    try:
+        yield sys.stdout, sys.stderr
+    finally:
+        sys.stdout.close()
+        sys.stderr.close()
+        sys.stdout = old_stdout
+        sys.stderr = old_stderr
 
 
 class Qdb(Bdb, object):
@@ -87,9 +129,7 @@ class Qdb(Bdb, object):
         self.exception_serializer = config.exception_serializer or \
             default_exception_serializer
         self.eval_fn = config.eval_fn or default_eval_fn
-        self.green = config.green
         self._file_cache = {}
-        self.redirect_output = config.redirect_output
         self.retry_attepts = config.retry_attepts
         self.repr_fn = config.repr_fn
         self._skip_fn = config.skip_fn or (lambda _: False)
@@ -104,16 +144,18 @@ class Qdb(Bdb, object):
             self.log_handler = FileHandler(config.log_file)
             self.log_handler.push_application()
 
-        # The timing between these lines might matter depending on the
-        # cmd_manager. Don't seperate them.
-        self.cmd_manager = (config.cmd_manager or RemoteCommandManager)(self)
-        self.cmd_manager.start(config.auth_msg)
+        self.bound_cmd_manager = config.cmd_manager or TerminalCommandManager()
+        self.bound_cmd_manager.start(config.auth_msg)
 
         # We need to be able to send stdout back to the user debugging the
         # program. We hold a handle to this in case the program resets stdout.
+        self._old_stdout = sys.stdout
+        self._old_stderr = sys.stderr
+        self.redirect_output = (
+            config.redirect_output and
+            not isinstance(self.cmd_manager, TerminalCommandManager)
+        )
         if self.redirect_output:
-            self._old_stdout = sys.stdout
-            self._old_stderr = sys.stderr
             sys.stdout = OutputTee(
                 sys.stdout,
                 RemoteOutput(self.cmd_manager, '<stdout>'),
@@ -122,6 +164,15 @@ class Qdb(Bdb, object):
                 sys.stderr,
                 RemoteOutput(self.cmd_manager, '<stderr>'),
             )
+
+    @property
+    def bound_cmd_manager(self):
+        return self.__cmd_manager
+
+    @bound_cmd_manager.setter
+    def bound_cmd_manager(self, value):
+        self.cmd_manager = value
+        self.__cmd_manager = BoundCmdManager(self, value)
 
     def skip_fn(self, path):
         return self._skip_fn(self.canonic(path))
@@ -139,13 +190,13 @@ class Qdb(Bdb, object):
         Return a new execution timeout context manager.
         If not execution timeout is in place, returns ExitStack()
         """
-        # We use green=False because this could be cpu bound. This will
+        # We use no_gevent=True because this could be cpu bound. This will
         # still throw to the proper greenlet if this is gevented.
         return (
             Timeout(
                 self.execution_timeout,
                 QdbExecutionTimeout(src, self.execution_timeout),
-                green=False
+                no_gevent=True,
             ) if self.execution_timeout else ExitStack()
         )
 
@@ -162,7 +213,7 @@ class Qdb(Bdb, object):
         # The line - 1 is so that querying line 1 gives us the first line in
         # the file.
         try:
-            return self._get_file_lines(filename)[line - 1]
+            return self.get_file_lines(filename)[line - 1]
         except IndexError:
             return 'No source available for this line.'
 
@@ -170,9 +221,9 @@ class Qdb(Bdb, object):
         """
         Retrieves a file out of cache or opens and caches it.
         """
-        return '\n'.join(self._get_file_lines(filename))
+        return '\n'.join(self.get_file_lines(filename))
 
-    def _get_file_lines(self, filename):
+    def get_file_lines(self, filename):
         """
         Retrieves the file from the file cache as a list of lines.
         If the file does not exist in the cache, it is cached from
@@ -200,10 +251,7 @@ class Qdb(Bdb, object):
             return True
         try:
             with open(canonic_name, 'r') as f:
-                self._file_cache[canonic_name] = map(
-                    lambda l: l[:-1] if l.endswith('\n') else l,
-                    f.readlines()
-                )
+                self._file_cache[canonic_name] = f.read().splitlines()
                 return True
         except IOError:
             # The caching operation failed.
@@ -408,33 +456,37 @@ class Qdb(Bdb, object):
 
     def user_line(self, stackframe):
         self.setup_stack(stackframe, None)
-        self.cmd_manager.send_watchlist()
-        self.cmd_manager.send_stack()
-        self.cmd_manager.next_command()
+        bound_cmd_manager = self.bound_cmd_manager
+        bound_cmd_manager.send_watchlist()
+        bound_cmd_manager.send_stack()
+        bound_cmd_manager.next_command()
 
     def user_return(self, stackframe, return_value):
         stackframe.f_locals['__return__'] = return_value
         self.setup_stack(stackframe, None)
-        self.cmd_manager.send_watchlist()
-        self.cmd_manager.send_stack()
-        msg = fmt_msg('return', str(return_value), serial=pickle.dumps)
-        self.cmd_manager.next_command(msg)
+        bound_cmd_manager = self.bound_cmd_manager
+        bound_cmd_manager.send_watchlist()
+        bound_cmd_manager.send_stack()
+        bound_cmd_manager.next_command(
+            fmt_msg('return', str(return_value), serial=json.dumps),
+        )
 
     def user_exception(self, stackframe, exc_info):
         exc_type, exc_value, exc_traceback = exc_info
         stackframe.f_locals['__exception__'] = exc_type, exc_value
         self.setup_stack(stackframe, exc_traceback)
-        self.cmd_manager.send_watchlist()
-        self.cmd_manager.send_stack()
+        bound_cmd_manager = self.bound_cmd_manager
+        bound_cmd_manager.send_watchlist()
+        bound_cmd_manager.send_stack()
         msg = fmt_msg(
             'exception', {
                 'type': exc_type.__name__,
                 'value': str(exc_value),
                 'traceback': traceback.format_tb(exc_traceback)
             },
-            serial=pickle.dumps,
+            serial=json.dumps,
         )
-        self.cmd_manager.next_command(msg)
+        return self.bound_cmd_manager.next_command(msg)
 
     def do_clear(self, bpnum):
         """
@@ -449,6 +501,98 @@ class Qdb(Bdb, object):
         Sets the quitting state and restores the program state.
         """
         self.quitting = True
+
+    def eval_(self, code, pprint=False):
+        repr_fn = self.repr_fn
+
+        outexc = None
+        outmsg = None
+        with capture_output() as (out, err), \
+                self._new_execution_timeout(code), \
+                self.inject_default_namespace() as stackframe:
+            try:
+                if not repr_fn and not pprint:
+                    self.eval_fn(
+                        code,
+                        stackframe,
+                        'single',
+                    )
+                else:
+                    try:
+                        # Do some some custom single mode magic that lets us
+                        # call the repr function on the last expr.
+                        value = progn(
+                            code,
+                            self.eval_fn,
+                            stackframe,
+                        )
+                    except QdbPrognEndsInStatement:
+                        # Statements have no value to print.
+                        pass
+                    else:
+                        if pprint:
+                            value = pformat(value)
+                        if repr_fn:
+                            value = repr_fn(value)
+                        print(value)
+            except Exception as e:
+                outexc = type(e).__name__
+                outmsg = self.exception_serializer(e)
+            else:
+                outmsg = out.getvalue().rstrip('\n')
+
+        if outexc is not None or outmsg is not None:
+            self.cmd_manager.send_print(code, outexc, outmsg)
+
+        self.update_watchlist()
+
+    def _stack_jump_to(self, index):
+        """
+        Jumps the stack to a specific index.
+        Raises an IndexError if the desired index does not exist.
+        """
+        # Try to jump here first. This could raise an IndexError which will
+        # prevent the tracer's state from being corrupted.
+        self.curframe = self.stack[index][0]
+
+        self.curindex = index
+        self.curframe_locals = self.curframe.f_locals
+        self.update_watchlist()
+
+    def stack_shift_direction(self, direction):
+        """
+        Shifts the stack up or down depending on direction.
+        If direction is positive, travel up, if direction is negative, travel
+        down. If direction is 0, do nothing.
+        If you cannot shift in the desired direction, an IndexError will be
+        raised.
+        """
+        if direction == 0:
+            return  # nop
+
+        stride = -1 if direction > 0 else 1
+        stack = self.stack
+        stacksize = len(stack)
+        curindex = self.curindex
+        skip_fn = self.skip_fn
+        target = None
+
+        def pred_up(idx):
+            return idx > 0
+
+        def pred_down(idx):
+            return idx < stacksize - 1
+
+        pred = pred_up if direction > 0 else pred_down
+        while pred(curindex):
+            curindex += stride
+            if not skip_fn(stack[curindex][0].f_code.co_filename):
+                target = curindex
+                break
+
+        if target is None:
+            raise IndexError('Shifted off the stack')
+        self._stack_jump_to(target)
 
     def disable(self, mode='soft'):
         """
@@ -506,7 +650,7 @@ class Qdb(Bdb, object):
         """
         stackframe = stackframe or self.curframe
         to_remove = set()
-        for k, v in self.default_namespace.iteritems():
+        for k, v in items(self.default_namespace):
             if k not in stackframe.f_globals:
                 # Only add the default things if the name is unbound.
                 stackframe.f_globals[k] = v

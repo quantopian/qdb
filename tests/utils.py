@@ -13,15 +13,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from collections import namedtuple
-import gevent
-from gevent.queue import Queue, Empty
+import json
+from time import sleep
 
 from qdb.comm import CommandManager, NopCommandManager
+from qdb.compat import PY3
 
-try:
-    import cPickle as pickle
-except ImportError:
-    import pickle
+
+if PY3:
+    from queue import Queue, Empty
+else:
+    from Queue import Queue, Empty
 
 
 class QueueCommandManager(CommandManager):
@@ -29,8 +31,8 @@ class QueueCommandManager(CommandManager):
     A command manager that takes a queue of functions that act on
     the tracer and apply them one at a time with each call to next_command().
     """
-    def __init__(self, tracer):
-        super(QueueCommandManager, self).__init__(tracer)
+    def __init__(self):
+        super(QueueCommandManager, self).__init__()
         self.queue = Queue()
         self.sent = []
 
@@ -44,7 +46,7 @@ class QueueCommandManager(CommandManager):
         """
         Simulates waiting on the user to feed us input for duration seconds.
         """
-        self.enqueue(lambda t: gevent.sleep(duration))
+        self.enqueue(lambda t: sleep(duration + int(PY3)))
 
     def clear(self):
         """
@@ -52,23 +54,23 @@ class QueueCommandManager(CommandManager):
         """
         self.queue = Queue()
 
-    def user_next_command(self):
+    def user_next_command(self, tracer):
         """
         Removes one message from the internal queue and apply it to the
         debugger.
         """
         try:
-            self.queue.get_nowait()(self.tracer)
+            self.queue.get_nowait()(tracer)
         except Empty:
             return
 
     def send(self, msg):
         # Collect the output so that we can make assertions about it.
-        self.sent.append(pickle.loads(msg))
+        self.sent.append(json.loads(msg))
 
     user_stop = clear
 
-    def start(self, auth_msg=''):
+    def start(self, tracer, auth_msg=''):
         pass
 
 
@@ -76,8 +78,8 @@ OutputMessage = namedtuple('OutputMessage', ['input_', 'exc', 'output'])
 
 
 class OutputCatchingNopCommandManager(NopCommandManager):
-    def __init__(self, tracer):
-        super(OutputCatchingNopCommandManager, self).__init__(tracer)
+    def __init__(self):
+        super(OutputCatchingNopCommandManager, self).__init__()
         self.msgs = []
 
     def send_print(self, input_, exc, output):
