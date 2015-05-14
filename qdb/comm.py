@@ -537,7 +537,7 @@ class RemoteCommandManager(CommandManager):
         if not self.payload_check(payload, 'clear_break'):
             return self.next_command.tailcall(tracer)
         try:
-            breakpoint = self.fmt_breakpoint_dict(payload)
+            breakpoint = self.fmt_breakpoint_dict(tracer, payload)
         except QdbBreakpointReadError as b:
             err_msg = fmt_err_msg('clear_break', str(b), serial=json.dumps)
             return self.next_command.tailcall(tracer, err_msg)
