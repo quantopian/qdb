@@ -631,7 +631,7 @@ class RemoteCommandManager(CommandManager):
         """
         Sends back initial information and defers to user control.
         """
-        self.send_breakpoints(tracer)
+        self.send_breakpoints()
         self.send_watchlist(tracer)
         self.send_stack(tracer)
         return self.next_command.tailcall(tracer)
