@@ -112,7 +112,7 @@ class CommandManager(object):
             # already disabled.
             pass
 
-    def send_breakpoints(self):
+    def send_breakpoints(self, tracer):
         """
         Sends the breakpoint list event.
         """
