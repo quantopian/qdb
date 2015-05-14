@@ -20,6 +20,7 @@ from qdb.tracer import Qdb
 from qdb.comm import (  # NOQA
     RemoteCommandManager,
     ServerLocalCommandManager,
+    TerminalCommandManager,
 )
 
 # Populate the namespace with potentially user facing errors. This allows the
@@ -33,7 +34,7 @@ from qdb.errors import (  # NOQA
     QdbUnreachableBreakpoint,
 )
 
-_version = '0.1.0'
+_version = '0.2.0'
 
 
 def set_trace(stop=True, **kwargs):

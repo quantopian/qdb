@@ -56,7 +56,7 @@ Now that you have a server running, you may run a process under qdb.
 As an example, try saving the following as qdb_test.py:
 
 ```python
-import qdb
+from qdb import set_trace, RemoteCommandManager
 
 
 def f():
@@ -69,6 +69,7 @@ def main():
         uuid='qdb',
         host='localhost',
         port=8001,
+        cmd_manager=RemoteCommandManager(),
     )
     mutable_object = {}
     print 'Hello world!'
