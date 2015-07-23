@@ -24,8 +24,8 @@ test:
 	nosetests tests/
 
 requirements:
-	pip install -r etc/requirements_dev.txt
-	pip install -r etc/requirements.txt
+	pip install --exists-action w -r etc/requirements_dev.txt
+	pip install --exists-action w -r etc/requirements.txt
 ifeq ($(shell python -c 'import sys;print(sys.version_info.major)'),2)
-	pip install -r etc/requirements_gevent.txt
+	pip install --exists-action w -r etc/requirements_gevent.txt
 endif
