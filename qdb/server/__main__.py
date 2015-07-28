@@ -13,9 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import argparse
-from contextlib2 import ExitStack
 
-from logbook import FileHandler
+from logbook import FileHandler, StderrHandler
 
 from qdb.server.server import QdbServer
 
@@ -104,5 +103,9 @@ if __name__ == '__main__':
     )
     args = vars(argparser.parse_args())
     log = args.pop('log', None)
-    with FileHandler(log) if log else ExitStack():
+    if log:
+        handler = FileHandler(log)
+    else:
+        handler = StderrHandler()
+    with handler:
         QdbServer(**args).serve_forever()
