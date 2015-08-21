@@ -28,6 +28,9 @@ from struct import pack, unpack
 from textwrap import dedent
 
 from logbook import Logger
+from pygments import highlight
+from pygments.lexers import PythonLexer
+from pygments.formatters import TerminalFormatter
 
 from qdb.compat import range, PY3, items, Connection, gevent, input, print_
 from qdb.errors import (
@@ -778,6 +781,8 @@ class TerminalCommandManager(CommandManager):
         import readline
         self.readline = readline
         readline.parse_and_bind("tab: complete")
+        import sys
+        sys.stderr.write("\x1b[2J\x1b[H")
 
     def pprint(self, msg):
         pprint(msg)
@@ -882,6 +887,8 @@ class TerminalCommandManager(CommandManager):
 
         command = getattr(self, 'do_' + cmd, None)
         if command is None:
+            import sys
+            sys.stderr.write("\x1b[2J\x1b[H")
             return self.do_print(' '.join(inp), tracer)
         else:
             try:
@@ -889,6 +896,8 @@ class TerminalCommandManager(CommandManager):
             except IndexError:
                 arg = None
 
+            import sys
+            sys.stderr.write("\x1b[2J\x1b[H")
             return command(arg, tracer)
 
     def do_print(self, arg, tracer):
@@ -1022,29 +1031,36 @@ class TerminalCommandManager(CommandManager):
 
         curline = tracer.curframe.f_lineno
         if start is None and end is None and arg != ':':
-            start = curline - 5
+            start = curline - 10
             if start < 0:
                 start = 0
-            end = curline + 5
+            end = curline + 10
 
         def prepend(ix_l):
-            return (
-                '%s ' % ('-->' if ix_l[0] == curline else '   ')
-            ) + ix_l[1]
+            length = len(str(end))
+            if ix_l[0] == curline:
+                prefix = '-' * (length + 1) + '>'
+            else:
+                prefix = str(ix_l[0]).rjust(length) + '  '
+            return ' '.join([prefix, ix_l[1]])
 
-        self.writeln(
-            '\n'.join(
-                map(
-                    prepend,
-                    enumerate(
+        lines = map(
+            prepend,
+            enumerate(
+                highlight(
+                    '\n'.join(
                         tracer.get_file_lines(
                             tracer.curframe.f_code.co_filename,
-                        )[start:end],
-                        1 if start is None else start + 1,
-                    )
-                )
+                        )
+                    ),
+                    PythonLexer(),
+                    TerminalFormatter(),
+                ).split('\n')[start:end],
+                1 if start is None else start + 1,
             ),
         )
+        self.writeln('\n'.join(lines))
+
         if recurse:
             return self.next_command.tailcall(tracer)
     do_l = do_list
