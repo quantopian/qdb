@@ -50,8 +50,10 @@ class QdbFailedToConnect(QdbError):
             % (self.address, self.retry_attepts)
 
     def __repr__(self):
-        return 'QdbFailedToConnect(%s, %d)'\
-            % (self.address, self.retry_attepts)
+        return 'QdbFailedToConnect(%r, %d)' % (
+            self.address,
+            self.retry_attepts,
+        )
 
 
 class QdbUnreachableBreakpoint(QdbError):
@@ -66,7 +68,7 @@ class QdbUnreachableBreakpoint(QdbError):
             return 'Failed to set breakpoint: %s' % self.breakpoint
 
     def __repr__(self):
-        return 'QdbUnreachableBreakpoint(%s)' % repr(self.breakpoint)
+        return 'QdbUnreachableBreakpoint(%r)' % repr(self.breakpoint)
 
 
 class QdbTopFrame(QdbError):
@@ -119,7 +121,7 @@ class QdbCommunicationError(QdbError):
         return str(self.exception)
 
     def __repr__(self):
-        return 'QdbCommunicationError(%s)' % repr(self.exception)
+        return 'QdbCommunicationError(%r)' % self.exception
 
 
 class QdbInvalidRoute(QdbError):
@@ -133,7 +135,7 @@ class QdbInvalidRoute(QdbError):
         return self.route
 
     def __repr__(self):
-        return 'QdbInvalidRoute(%s)' % self.route
+        return 'QdbInvalidRoute(%r)' % self.route
 
 
 class QdbAuthenticationError(QdbError):
@@ -148,7 +150,7 @@ class QdbAuthenticationError(QdbError):
         return self.message
 
     def __repr__(self):
-        return 'QdbInvalidRoute(%s)' % self.message
+        return 'QdbInvalidRoute(%r)' % self.message
 
 
 class QdbPrognEndsInStatement(QdbError):
@@ -160,11 +162,13 @@ class QdbPrognEndsInStatement(QdbError):
         self.src = src
 
     def __str__(self):
-        return 'Cannot call progn with src="%s" as this ends in a statement.' \
-            % self.src
+        return (
+            'Cannot call progn with src=%r as this ends in a statement.' %
+            self.src
+        )
 
     def __repr__(self):
-        return "QdbPrognEndsInStatement(src='%s')" % self.src
+        return "QdbPrognEndsInStatement(src=%r)" % self.src
 
 
 class QdbExecutionTimeout(QdbError):
@@ -180,4 +184,4 @@ class QdbExecutionTimeout(QdbError):
             % (self.src, self.time, 's' if self.time == 1 else '')
 
     def __repr__(self):
-        return 'QdbExecutionTimeout(src=%s, time=%d)' % (self.src, self.time)
+        return 'QdbExecutionTimeout(src=%r, time=%d)' % (self.src, self.time)
