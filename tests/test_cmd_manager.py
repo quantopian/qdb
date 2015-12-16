@@ -16,14 +16,13 @@ from functools import partial
 from pprint import pformat
 import signal
 import sys
-from time import sleep
 from unittest import TestCase
 
 from nose_parameterized import parameterized
 
 from qdb import Qdb
 from qdb.comm import RemoteCommandManager, ServerLocalCommandManager, fmt_msg
-from qdb.compat import with_metaclass, PY2, gevent
+from qdb.compat import with_metaclass, PY2, gevent, gyield
 from qdb.errors import (
     QdbFailedToConnect,
     QdbAuthenticationError,
@@ -212,7 +211,7 @@ class RemoteCommandManagerTester(with_metaclass(Py2TestMeta, TestCase)):
         tracer.curframe_locals = {'a': 'a'}
         cmd_manager = self.cmd_manager
         cmd_manager.start(tracer, '')
-        sleep(0.01)
+        gyield()
         self.server.session_store.send_to_tracer(
             uuid=tracer.uuid,
             event=fmt_msg('locals')
@@ -260,7 +259,7 @@ class RemoteCommandManagerTester(with_metaclass(Py2TestMeta, TestCase)):
             redirect_output=False,
             green=True,
         )
-        sleep(0.01)
+        gyield()
         if direction == 'down':
             # We are already located in the bottom frame, let's go up one
             # so that we may try going down.
@@ -277,7 +276,7 @@ class RemoteCommandManagerTester(with_metaclass(Py2TestMeta, TestCase)):
             uuid=db.uuid,
             event=fmt_msg('disable', 'soft')
         )
-        sleep(0.01)
+        gyield()
         db.set_trace()
 
         start_ind = events[-2]['p']['index']
@@ -350,7 +349,7 @@ class RemoteCommandManagerTester(with_metaclass(Py2TestMeta, TestCase)):
             redirect_output=False,
             green=True,
         )
-        sleep(0.01)
+        gyield()
         self.server.session_store.send_to_tracer(
             uuid=db.uuid,
             event=fmt_msg('eval', input_)
@@ -403,7 +402,7 @@ class RemoteCommandManagerTester(with_metaclass(Py2TestMeta, TestCase)):
             port=self.tracer_port,
             redirect_output=False,
         )
-        sleep(0.01)
+        gyield()
         self.server.session_store.send_to_tracer(
             uuid=db.uuid,
             event=fmt_msg('pprint', input_)
@@ -437,7 +436,7 @@ class RemoteCommandManagerTester(with_metaclass(Py2TestMeta, TestCase)):
             redirect_output=False,
             green=True,
         )
-        sleep(0.01)
+        gyield()
         self.server.session_store.send_to_tracer(
             uuid=db.uuid,
             event=fmt_msg('eval', "test_var = 'mutated'")
@@ -483,7 +482,7 @@ class RemoteCommandManagerTester(with_metaclass(Py2TestMeta, TestCase)):
             execution_timeout=1,
             green=True,
         )
-        sleep(0.01)
+        gyield()
         self.server.session_store.send_to_tracer(
             uuid=db.uuid,
             event=fmt_msg('eval', to_eval)
@@ -523,7 +522,7 @@ class RemoteCommandManagerTester(with_metaclass(Py2TestMeta, TestCase)):
             redirect_output=False,
             green=True,
         )
-        sleep(0.01)
+        gyield()
         db.set_trace(stop=False)
         db.disable()
 
@@ -563,7 +562,7 @@ class RemoteCommandManagerTester(with_metaclass(Py2TestMeta, TestCase)):
             skip_fn=skip_fn if use_skip_fn else None,
             green=True,
         )
-        sleep(0.01)
+        gyield()
         self.server.session_store.send_to_tracer(
             uuid=db.uuid,
             event=fmt_msg('continue')
@@ -593,7 +592,7 @@ class RemoteCommandManagerTester(with_metaclass(Py2TestMeta, TestCase)):
             redirect_output=False,
             green=True,
         )
-        sleep(0.01)
+        gyield()
         for n in range(sys.getrecursionlimit()):
             self.server.session_store.send_to_tracer(
                 uuid=db.uuid,
