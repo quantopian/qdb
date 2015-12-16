@@ -29,13 +29,23 @@ from textwrap import dedent
 
 from logbook import Logger
 
-from qdb.compat import range, PY3, items, Connection, gevent, input, print_
+from qdb.compat import (
+    Connection,
+    PY3,
+    gevent,
+    input,
+    items,
+    print_,
+    range,
+    with_metaclass,
+)
 from qdb.errors import (
-    QdbFailedToConnect,
+    QdbAuthenticationError,
     QdbBreakpointReadError,
     QdbCommunicationError,
+    QdbFailedToConnect,
+    QdbReceivedInvalidData,
     QdbUnreachableBreakpoint,
-    QdbAuthenticationError,
 )
 from qdb.utils import Timeout, tco
 
@@ -81,11 +91,10 @@ def fmt_breakpoint(breakpoint):
     }
 
 
-class CommandManager(object):
+class CommandManager(with_metaclass(ABCMeta, object)):
     """
     An abstract base class for the command managers that control the tracer.
     """
-    __metaclass__ = ABCMeta
 
     def _fmt_stackframe(self, tracer, stackframe, line):
         """
