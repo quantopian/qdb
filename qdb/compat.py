@@ -16,6 +16,22 @@ from __future__ import print_function
 from types import MethodType
 
 
+__all__ = [
+    'Connection',
+    'ExitStack',
+    'PY2',
+    'PY3',
+    'StringIO',
+    'gevent',
+    'gyield',
+    'items',
+    'keys',
+    'range',
+    'reduce',
+    'zip',
+]
+
+
 try:
     reduce = reduce
     PY2 = True
@@ -23,14 +39,18 @@ except NameError:
     from functools import reduce
     PY2 = False
 
-
 PY3 = not PY2
 
 try:
     import gevent
+
+    def gyield():
+        gevent.sleep(0.01)
 except ImportError:
     gevent = None
 
+    def gyield():
+        pass
 
 if PY2:
     try:
@@ -91,18 +111,3 @@ def with_metaclass(metaclass, *bases):
     metaclass syntax.
     """
     return metaclass('SurrogateBase', bases, {})
-
-
-__all__ = [
-    'Connection',
-    'ExitStack',
-    'PY2',
-    'PY3',
-    'StringIO',
-    'gevent',
-    'items',
-    'keys',
-    'range',
-    'reduce',
-    'zip',
-]

@@ -19,7 +19,7 @@ from nose_parameterized import parameterized
 from struct import pack
 
 from qdb.comm import fmt_msg, fmt_err_msg, get_events_from_socket
-from qdb.compat import gevent, with_metaclass, PY2
+from qdb.compat import gevent, with_metaclass, PY2, gyield
 
 if PY2:
     # These need python 2
@@ -300,7 +300,7 @@ class ServerTester(with_metaclass(Py2TestMeta, TestCase)):
             )
             send_client_event(client, 'start', '')
             # yield to the session_store to let it get attached.
-            gevent.sleep(0.01)
+            gyield()
             self.assertIn('test', server.session_store)
 
     def test_tracer_orphan_session(self):
@@ -321,5 +321,5 @@ class ServerTester(with_metaclass(Py2TestMeta, TestCase)):
                 'local': (0, 0),
             })
             # yield to the session_store to let it get attached.
-            gevent.sleep(0.01)
+            gyield()
             self.assertIn('test', server.session_store)
