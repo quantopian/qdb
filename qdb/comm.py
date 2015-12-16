@@ -286,7 +286,6 @@ class RemoteCommandManager(CommandManager):
                 return proc
 
             self._start_process = _start_process
-
         self.pipe = None
         self.socket = None
         self.reader = None
@@ -667,35 +666,34 @@ def get_events_from_socket(sck):
     """
     while True:
         try:
-            rlen = sck.recv(4)
-            if len(rlen) != 4:
-                return
-            rlen = unpack('>i', rlen)[0]
-            bytes_received = 0
-            resp = b''
-            with Timeout(1, False):
-                while bytes_received < rlen:
-                    resp += sck.recv(rlen - bytes_received)
-                    bytes_received = len(resp)
+            sck.setblocking(True)
+            resp = bytearray(4)
+            if sck.recv_into(resp, 4) != 4:
+                raise QdbReceivedInvalidData(resp)
 
-            if bytes_received != rlen:
-                return  # We are not getting bytes anymore.
+            rlen = unpack('>i', resp)[0]
+            resp = bytearray(rlen)
+            sck.settimeout(1)
+            if sck.recv_into(resp, rlen) != rlen:
+                raise QdbReceivedInvalidData(resp)
 
             if PY3:
                 resp = resp.decode('utf-8')
+            else:
+                resp = bytes(resp)
 
             cmd = json.loads(resp)
             if cmd['e'] == 'disabled':
                 # We are done tracing.
                 return
-        except (socket.error, ValueError) as e:
-            # We can no longer talk the the server.
-            log.warn('Exception raised reading from socket')
-            yield fmt_err_msg('socket', str(e))
-            return
         except KeyError:
             log.warn('Client sent invalid cmd.')
             yield fmt_err_msg('event', "No 'e' field sent")
+            return
+        except Exception as e:
+            # We can no longer talk to the server.
+            log.warn('Exception raised reading from socket')
+            yield fmt_err_msg('socket', str(e))
             return
         else:
             # Yields only valid commands.

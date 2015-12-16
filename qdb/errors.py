@@ -93,21 +93,21 @@ class QdbBreakpointReadError(QdbError):
         return 'Could not read Breakpoint from %s' % self.data
 
     def __repr__(self):
-        return 'QdbBreakpointReadError(%s)' % self.data
+        return 'QdbBreakpointReadError(%r)' % self.data
 
 
-class QdbReceivedInvalidLength(QdbError):
+class QdbReceivedInvalidData(QdbError):
     """
-    Signals that the length data is invalid.
+    Signals that the data recieved is invalid.
     """
-    def __init__(self, length):
-        self.length = length
+    def __init__(self, data):
+        self.data = data
 
     def __str__(self):
-        return str(self.length)
+        return 'Invalid data: %r' % self.data
 
     def __repr__(self):
-        return 'QdbReceivedInvalidLength(%s)' % self.length
+        return 'QdbInvalidData(%r)' % self.data
 
 
 class QdbCommunicationError(QdbError):
