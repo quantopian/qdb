@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import ast
+from functools import update_wrapper
 import re
 import signal as signal_module
 import sys
@@ -323,24 +324,24 @@ def progn(src, eval_fn=None, stackframe=None):
 
 
 class tco(object):
-    """
-    Emulates explicit tail call optmization.
+    """Emulates explicit tail call optmization.
 
-    example:
+    This allows us to write recursive functions that don't blow up the stack.
 
-      @tco
-      def prod(ns, a=1):
-          n = ns[0]
-          if n == 0:
-              return 0
-          if not ns:
-              return a
-          return prod.tailcall(ns[1:], n * a)
-
+    Example
+    -------
+    >>> @tco
+    ... def prod(ns, a=1):
+    ...     if not ns:
+    ...         return a
+    ...     n = ns[0]
+    ...     if n == 0:
+    ...         return 0
+    ...     return prod.tailcall(ns[1:], n * a)
     """
     def __init__(self, f):
         self._f = f
-        self.__name__ = f.__name__
+        update_wrapper(self, f)
 
     def __call__(self, *args, **kwargs):
         f = self._f
