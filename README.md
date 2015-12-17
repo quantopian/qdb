@@ -65,7 +65,7 @@ def f():
 
 
 def main():
-    qdb.set_trace(
+    set_trace(
         uuid='qdb',
         host='localhost',
         port=8001,
