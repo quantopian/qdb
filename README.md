@@ -11,7 +11,7 @@ qdb powers the in-browser debugger at [Quantopian](https://www.quantopian.com/po
 
 qdb is a debugger for python that allows users to debug code executing
 on remote machine. qdb is split into three main components that may all be
-running on seperate hardware:
+running on separate hardware:
 
 - The client
 - The tracer
