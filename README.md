@@ -94,7 +94,7 @@ client directory with:
 Before you are finished, you will need to get the output from the program, in a
 seperate terminal, run:
 
-    $ tail -f /tmp/qdb/qdb
+    $ tail -f /tmp/qdb/.qdb
 
 This will be the realtime output from the debugger.
 
