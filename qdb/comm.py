@@ -58,8 +58,8 @@ def fmt_msg(event, payload=None, serial=None):
     Serial is a function to call on the frame to serialize it, e.g:
     json.dumps.
     """
-    #if event=="locals":
-    #   payload = parse_variables(payload)
+    if event=="locals":
+        payload = parse_variables(payload)
 
     frame = {
         'e': event,
@@ -86,7 +86,6 @@ def fmt_err_msg(error_type, data, serial=None):
 def parse_variables(paydict):
     if isinstance(paydict,dict) and paydict:
         strdict={}
-        print("parsing")
         for (k,v) in paydict.items():
             strdict[str(k)]=str(v)
         return strdict
