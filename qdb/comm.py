@@ -84,6 +84,9 @@ def fmt_err_msg(error_type, data, serial=None):
     )
 
 def parse_variables(paydict):
+    """
+    parses the variables from the dictioinary and converts to string type
+    """
     if isinstance(paydict,dict) and paydict:
         strdict={}
         for (k,v) in paydict.items():
