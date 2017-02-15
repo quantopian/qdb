@@ -1,3 +1,11 @@
+clean:
+	python etc/clean.py
+
+style:
+	flake8 qdb tests
+
+test:
+	nosetests tests/
 
 
 
@@ -23,14 +31,6 @@
 # limitations under the License.
 all: requirements clean style test
 
-clean:
-	python etc/clean.py
-
-style:
-	flake8 qdb tests
-
-test:
-	nosetests tests/
 
 requirements:
 	pip install --exists-action w -r etc/requirements_dev.txt
