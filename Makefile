@@ -1,3 +1,4 @@
+# Copyright 2014 Quantopian, Inc.
 clean:
 	python etc/clean.py
 
