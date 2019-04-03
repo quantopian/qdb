@@ -58,7 +58,7 @@ class TracerTester(TestCase):
         with self.assertRaises(TypeError):
             Qdb(config=True, merge=False, keyword=True)
 
-        Qdb._instance = None
+        self.assertIs(Qdb._instance, None)
 
     def test_as_ctx_mgr(self):
         """
