@@ -1,7 +1,7 @@
 language: python
 python:
   - "2.7"
-  - "3.4"
+  - "3.6"
 
 install:
   - make requirements
@@ -11,3 +11,7 @@ before_script:
 
 script:
   - make test
+
+branches:
+  only:
+    - master
