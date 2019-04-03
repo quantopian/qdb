@@ -41,18 +41,18 @@ class QdbFailedToConnect(QdbError):
     """
     Error signaling that qdb was unable to connect for some reason.
     """
-    def __init__(self, address, retry_attepts):
+    def __init__(self, address, retry_attempts):
         self.address = address
-        self.retry_attepts = retry_attepts
+        self.retry_attempts = retry_attempts
 
     def __str__(self):
-        return 'Failed to connect to %s after %d retries.' \
-            % (self.address, self.retry_attepts)
+        return 'Failed to connect to %s after %d attempts.' \
+            % (self.address, self.retry_attempts)
 
     def __repr__(self):
         return 'QdbFailedToConnect(%r, %d)' % (
             self.address,
-            self.retry_attepts,
+            self.retry_attempts,
         )
 
 

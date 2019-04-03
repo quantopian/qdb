@@ -111,7 +111,7 @@ class RemoteCommandManagerTester(with_metaclass(Py2TestMeta, TestCase)):
         tracer = MagicMock()
         tracer.address = self.tracer_host, self.tracer_port
         tracer.pause_signal = signal.SIGUSR2
-        tracer.retry_attepts = 1
+        tracer.retry_attempts = 1
         tracer.local = 0, 0
         tracer.uuid = 'mock'
         tracer.watchlist = {}

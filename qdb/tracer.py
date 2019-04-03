@@ -132,7 +132,7 @@ class Qdb(Bdb, object):
             default_exception_serializer
         self.eval_fn = config.eval_fn or default_eval_fn
         self._file_cache = {}
-        self.retry_attepts = config.retry_attepts
+        self.retry_attempts = config.retry_attempts
         self.repr_fn = config.repr_fn
         self._skip_fn = config.skip_fn or (lambda _: False)
         self.pause_signal = config.pause_signal \

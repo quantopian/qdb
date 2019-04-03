@@ -37,7 +37,7 @@ class QdbConfigTester(TestCase):
                 'skip_fn': 'user-set',
                 'pause_signal': 'user-set',
                 'redirect_output': 'user-set',
-                'retry_attepts': 'user-set',
+                'retry_attempts': 'user-set',
                 'uuid': 'user-set',
                 'cmd_manager': 'user-set',
                 'green': 'user-set',
