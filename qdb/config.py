@@ -41,7 +41,7 @@ DEFAULT_OPTIONS = {
     'skip_fn': None,
     'pause_signal': None,
     'redirect_output': True,
-    'retry_attepts': 10,
+    'retry_attempts': 10,
     'uuid': 'qdb',
     'cmd_manager': None,
     'green': False,

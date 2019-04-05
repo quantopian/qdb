@@ -91,8 +91,10 @@ class Qdb(Bdb, object):
         called.
         """
         if not cls._instance:
-            cls._instance = super(Qdb, cls).__new__(cls)
-            cls._instance._init(*args, **kwargs)
+            inst = super(Qdb, cls).__new__(cls)
+            # `_init` might raise, so don't save as `_instance` yet:
+            inst._init(*args, **kwargs)
+            cls._instance = inst
         return cls._instance
 
     def __init__(self, *args, **kwargs):
@@ -130,7 +132,7 @@ class Qdb(Bdb, object):
             default_exception_serializer
         self.eval_fn = config.eval_fn or default_eval_fn
         self._file_cache = {}
-        self.retry_attepts = config.retry_attepts
+        self.retry_attempts = config.retry_attempts
         self.repr_fn = config.repr_fn
         self._skip_fn = config.skip_fn or (lambda _: False)
         self.pause_signal = config.pause_signal \

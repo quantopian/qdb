@@ -296,7 +296,7 @@ class RemoteCommandManager(CommandManager):
         """
         log.info('Connecting to (%s, %d)' % tracer.address)
 
-        for n in range(tracer.retry_attepts):
+        for n in range(tracer.retry_attempts):
             # Try to connect to the server.
             try:
                 self.socket = socket.create_connection(tracer.address)
@@ -315,7 +315,7 @@ class RemoteCommandManager(CommandManager):
             )
             raise QdbFailedToConnect(
                 tracer.address,
-                tracer.retry_attepts
+                tracer.retry_attempts
             )
         log.info('Client %s connected to (%s, %d)'
                  % (tracer.uuid, tracer.address[0],
@@ -334,7 +334,7 @@ class RemoteCommandManager(CommandManager):
                   tracer.pause_signal),
         )
         with Timeout(5, QdbFailedToConnect(tracer.address,
-                                           tracer.retry_attepts)):
+                                           tracer.retry_attempts)):
             # Receive a message to know that the reader is ready to begin.
             while True:
                 try:
