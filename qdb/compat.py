@@ -28,6 +28,7 @@ __all__ = [
     'keys',
     'range',
     'reduce',
+    'str_to_bytes',
     'zip',
 ]
 
@@ -111,3 +112,34 @@ def with_metaclass(metaclass, *bases):
     metaclass syntax.
     """
     return metaclass('SurrogateBase', bases, {})
+
+
+def str_to_bytes(s, encoding):
+    """
+    Convert from ``str`` to ``six.binary_type``.
+
+    In Python 2, this is a no-op.
+    In Python 3, this encodes ``s`` as bytes using ``encoding``.
+
+    This function should be used in cases where you want to convert a value
+    that's always ``str`` (in both PY2 and PY3) into a value that's always
+    ``bytes``.
+
+    Parameters
+    ----------
+    s : str
+        Value to be converted to bytes.
+    encoding : str
+        Encoding to use for conversion in Python 3.
+
+    Returns
+    -------
+    bytes_ : bytes
+        The input string, as bytes.
+    """
+    if not isinstance(s, str):
+        raise TypeError("Expected str, got {}".format(type(s)))
+    if PY2:
+        return s
+    else:
+        return s.encode(encoding)
