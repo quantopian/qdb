@@ -30,6 +30,7 @@ from geventwebsocket import WebSocketError
 from logbook import Logger
 
 from qdb.comm import fmt_msg, fmt_err_msg
+from qdb.compat import str_to_bytes
 
 
 # errno's that are safe to ignore when killing a session.
@@ -283,9 +284,23 @@ class SessionStore(object):
         Sends a message to a socket, prefixed with the length.
         The preferred method of sending a message to a socket is through the
         send_to_tracer method.
+
+        Parameters
+        ----------
+        sck: socket
+            The socket to which to send a message.
+
+        msg: str
+            The message to send. In Py3, this is unicode.
+
+        Returns
+        -------
+        None
+
         """
-        sck.sendall(pack('>i', len(msg)))
-        sck.sendall(msg)
+        msg_to_send = str_to_bytes(msg, encoding='utf-8')
+        sck.sendall(pack('>i', len(msg_to_send)))
+        sck.sendall(msg_to_send)
 
     def is_local(self, uuid):
         """
@@ -411,5 +426,5 @@ class SessionStore(object):
         """
         Slaughters all the sessions that are in progress.
         """
-        for uuid in self._sessions.keys():
+        for uuid in list(self._sessions):
             self.slaughter(uuid, mode)
