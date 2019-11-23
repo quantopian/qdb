@@ -1,3 +1,19 @@
+requirements
+# Copyright 2014 Quantopian, Inc.
+clean:
+	python etc/clean.py
+
+style:
+	flake8 qdb tests
+
+test:
+	nosetests tests/
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+
+
 #
 # Copyright 2014 Quantopian, Inc.
 #
@@ -14,14 +30,6 @@
 # limitations under the License.
 all: requirements clean style test
 
-clean:
-	python etc/clean.py
-
-style:
-	flake8 qdb tests
-
-test:
-	nosetests tests/
 
 requirements:
 	pip install --exists-action w -r etc/requirements_dev.txt
