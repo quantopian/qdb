@@ -1,5 +1,5 @@
 # Gevent related
-gevent==1.2.2
+gevent==23.9.1
 gevent-websocket==0.9.3
 greenlet==0.4.2
 gipc==0.4.0
